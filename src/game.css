@@ -2411,3 +2411,32 @@ dialog::backdrop {
     transition: none;
   }
 }
+
+.global-mute-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 8px 10px;
+  border: 1px solid #f3cf7055;
+  border-radius: 10px;
+  background: #f3cf7010;
+  color: #f7df9f;
+  font-size: 11px;
+}
+.global-mute-note > svg {
+  flex-shrink: 0;
+}
+.global-mute-note > button {
+  margin-left: auto;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: #f4cf70;
+  color: #182449;
+  font:
+    600 11px "Outfit",
+    sans-serif;
+  cursor: pointer;
+}

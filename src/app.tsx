@@ -158,6 +158,7 @@ export function App() {
   const [wheelSnapshot, setWheelSnapshot] = useState<WheelEntry[] | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [effects, setEffects] = useState(true);
+  const [muted, setMuted] = useState(false);
   const [interactionMode, setInteractionMode] = useState<"orbit" | "spin">(
     "orbit",
   );
@@ -254,9 +255,9 @@ export function App() {
   }, [notice]);
 
   useEffect(() => {
-    audio.current.enabled = effects;
+    audio.current.enabled = effects && !muted;
     const prepare = () => {
-      if (effects) void audio.current.prepare().catch(() => {});
+      if (effects && !muted) void audio.current.prepare().catch(() => {});
     };
     document.addEventListener("pointerdown", prepare, {
       once: true,
@@ -270,7 +271,7 @@ export function App() {
       document.removeEventListener("pointerdown", prepare, true);
       document.removeEventListener("keydown", prepare, true);
     };
-  }, [effects]);
+  }, [effects, muted]);
 
   useEffect(() => {
     audio.current.volume = levels.effects / 100;
@@ -339,14 +340,21 @@ export function App() {
   async function toggleEffects() {
     const next = !effects;
     setEffects(next);
-    audio.current.enabled = next;
-    if (!next) return;
+    audio.current.enabled = next && !muted;
+    if (!next || muted) return;
     try {
       await audio.current.prepare();
       audio.current.cue("reveal");
     } catch {
       setNotice("Não foi possível ativar os efeitos neste navegador.");
     }
+  }
+
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    audio.current.enabled = effects && !next;
+    if (!next && effects) void audio.current.prepare().catch(() => {});
   }
 
   function chooseSoundtrack(track: Track) {
@@ -396,7 +404,7 @@ export function App() {
   function spin(direction: 1 | -1 = 1) {
     if (busy.current || !eligible.length || phase === "winner") return;
     busy.current = true;
-    if (effects) void audio.current.prepare().catch(() => {});
+    if (effects && !muted) void audio.current.prepare().catch(() => {});
     const pool = [...eligible];
     const index = randomIndex(pool.length);
     const person = pool[index];
@@ -869,20 +877,20 @@ export function App() {
                   <div className="stage-tools">
                     <button
                       title={
-                        effects
-                          ? "Desativar efeitos sonoros"
-                          : "Ativar efeitos sonoros"
+                        muted
+                          ? "Reativar todos os sons"
+                          : "Silenciar todos os sons"
                       }
                       aria-label={
-                        effects
-                          ? "Desativar efeitos sonoros"
-                          : "Ativar efeitos sonoros"
+                        muted
+                          ? "Reativar todos os sons"
+                          : "Silenciar todos os sons"
                       }
-                      aria-pressed={effects}
-                      onClick={() => void toggleEffects()}
+                      aria-pressed={muted}
+                      onClick={toggleMute}
                     >
                       <span
-                        className={`icon-swap ${effects ? "is-active" : ""}`}
+                        className={`icon-swap ${!muted ? "is-active" : ""}`}
                         aria-hidden="true"
                       >
                         <span className="active-icon">
@@ -1145,6 +1153,13 @@ export function App() {
         <p className="floating-settings-intro">
           Ajuste os controles e volte ao show.
         </p>
+        {muted && (
+          <div className="global-mute-note" role="status">
+            <SpeakerSlash size={16} />
+            <span>Todo o áudio está silenciado.</span>
+            <button onClick={toggleMute}>Reativar</button>
+          </div>
+        )}
         <h3>Como mover a roleta</h3>
         <div
           className="wheel-input-modes"
@@ -1406,6 +1421,7 @@ export function App() {
         <LocalSoundtrack
           track={soundtrack}
           volume={levels.music / 100}
+          muted={muted}
           onEnded={() =>
             setSoundtrack((current) =>
               current === "result" ? "background" : current,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MusicNotes, SpeakerHigh, WarningCircle } from "@phosphor-icons/react";
+import { MusicNotes, SpeakerHigh, SpeakerSlash, WarningCircle } from "@phosphor-icons/react";
 
 export type Track = "background" | "spin" | "result";
 export const TRACKS = {
@@ -12,10 +12,12 @@ export const TRACKS = {
 export function LocalSoundtrack({
   track,
   volume,
+  muted,
   onEnded,
 }: {
   track: Track;
   volume: number;
+  muted: boolean;
   onEnded: () => void;
 }) {
   const element = useRef<HTMLAudioElement>(null);
@@ -73,6 +75,7 @@ export function LocalSoundtrack({
       <audio
         ref={element}
         src={TRACKS[track].path}
+        muted={muted}
         loop={track !== "result"}
         onEnded={onEnded}
         preload="auto"
@@ -80,7 +83,11 @@ export function LocalSoundtrack({
         onPlaying={() => setStatus("playing")}
         onError={() => setStatus("error")}
       />
-      {status === "blocked" ? (
+      {muted ? (
+        <span className="now-playing" role="status">
+          <SpeakerSlash size={13} /> Áudio silenciado
+        </span>
+      ) : status === "blocked" ? (
         <button className="audio-unlock" onClick={() => void resume()}>
           <SpeakerHigh size={16} /> Liberar áudio
         </button>

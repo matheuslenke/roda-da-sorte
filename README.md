@@ -38,3 +38,5 @@ Volume: controles separados de 0 a 100% para música e efeitos, salvos neste nav
 Duração automática: 16–22 segundos por etapa, sem seletor de tempo. Cada etapa sorteia sua duração independentemente do vencedor, em intervalos de 0,25 s; a animação e os efeitos usam o mesmo tempo. Giros mais longos também têm mais voltas. A preferência por movimento reduzido mantém a versão curta.
 
 O botão flutuante Configurações reúne modo do mouse, volumes, ligar/desligar áudio, exclusão de vencedores e exportação. O painel abre sob demanda e fecha com Esc, clique fora ou pelo botão Fechar, liberando o palco para a roleta.
+
+O botão de som do palco é um mute geral: silencia todas as trilhas (intro, giro e resultado) e todos os efeitos. Desmutar restaura os níveis e as preferências de cada canal; as músicas continuam na posição atual, sem reiniciar. Os controles individuais permanecem no painel de configurações.
