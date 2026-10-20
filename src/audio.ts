@@ -1,18 +1,19 @@
 type Cue = "tick" | "reveal" | "win";
 
-/** Original synthesized cues keep the raffle usable when YouTube is unavailable. */
+/** Synthesized cues complement the two local music tracks. */
 export class ShowAudio {
   private context: AudioContext | null = null;
-  enabled = false;
+  enabled = true;
 
-  async enable() {
-    this.context ??= new AudioContext();
+  async prepare() {
+    if (!this.context || this.context.state === "closed")
+      this.context = new AudioContext();
     await this.context.resume();
-    this.enabled = true;
   }
 
   cue(kind: Cue) {
-    if (!this.enabled || !this.context) return;
+    if (!this.enabled || !this.context || this.context.state !== "running")
+      return;
     const context = this.context;
     const notes =
       kind === "win"

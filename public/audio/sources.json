@@ -1,0 +1,20 @@
+{
+  "intro.mp3": {
+    "source": "https://www.youtube.com/watch?v=BOzaFMFzeJY",
+    "title": "Trilha de Fundo Roda a Roda Jequiti",
+    "durationSeconds": 67.029333,
+    "format": "MP3 160 kbit/s"
+  },
+  "roleta.mp3": {
+    "source": "https://www.youtube.com/watch?v=290hVMFdonE",
+    "title": "Trilha Sonora Roleta Roda a Roda (Completa)",
+    "durationSeconds": 21.072979,
+    "format": "MP3 160 kbit/s"
+  },
+  "resultado.mp3": {
+    "source": "https://www.youtube.com/watch?v=hrYwcivPyNA",
+    "title": "Roda a Roda - Trilha Acerto V2",
+    "durationSeconds": 8.057333,
+    "format": "MP3 160 kbit/s"
+  }
+}

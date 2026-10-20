@@ -6,20 +6,24 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "test": "node --experimental-strip-types --test src/raffle.test.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
+    "@fontsource/archivo-black": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@fontsource/outfit": "^5.2.6",
     "@phosphor-icons/react": "^2.1.10",
     "canvas-confetti": "^1.9.4",
-    "@fontsource/outfit": "^5.2.6"
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "three": "^0.186.1"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
-    "@types/canvas-confetti": "^1.9.0",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^5.0.3",
     "typescript": "~5.9.2",
     "vite": "^7.1.7"

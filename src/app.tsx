@@ -32,18 +32,30 @@ import {
   addNames,
   csvResults,
   INITIAL_NAMES,
-  landingRotation,
   MAX_PARTICIPANTS,
   normalizeName,
   parseCsv,
   randomIndex,
 } from "./raffle";
-import type { Draw, Participant } from "./raffle";
+import type { Draw } from "./raffle";
 import { initialState, saveState } from "./storage";
+import type { SavedState } from "./storage";
 import { ShowAudio } from "./audio";
-import { Wheel as RaffleWheel, WHEEL_COLORS } from "./wheel";
+import { WHEEL_COLORS } from "./wheel";
+import { ThreeWheel } from "./three-wheel";
+import { boardLayout } from "./board";
+import { LocalSoundtrack } from "./local-soundtrack";
+import type { Track } from "./local-soundtrack";
+import { entryLanding, groupForPerson, visualGroups } from "./wheel-model";
+import type { WheelEntry } from "./wheel-model";
 
-type Phase = "idle" | "spinning" | "revealing" | "winner";
+type Phase =
+  | "idle"
+  | "group-spinning"
+  | "group-revealing"
+  | "spinning"
+  | "revealing"
+  | "winner";
 type Panel = "settings" | "how" | "music" | null;
 const dateFormat = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
@@ -61,29 +73,38 @@ function downloadFile(content: string, name: string, type: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function LetterBoard({ phase, winner }: { phase: Phase; winner: Draw | null }) {
+function LetterBoard({
+  phase,
+  winner,
+  group,
+}: {
+  phase: Phase;
+  winner: Draw | null;
+  group: string | null;
+}) {
   const reveal = (phase === "revealing" || phase === "winner") && winner;
   const words = reveal
     ? winner.name.toLocaleUpperCase("pt-BR")
-    : phase === "spinning"
-      ? "QUEM SERÁ O SORTUDO?"
-      : "A SORTE ESTÁ NO AR";
-  const rows: string[] = ["", ""];
-  for (const word of words.split(" ")) {
-    const row = rows[0].length + word.length + 1 <= 14 ? 0 : 1;
-    rows[row] = `${rows[row]} ${word}`.trim();
-  }
+    : phase === "group-revealing"
+      ? (group ?? "GRUPO DA SORTE")
+      : phase === "group-spinning"
+        ? "QUAL É O GRUPO DA SORTE?"
+        : phase === "spinning"
+          ? "QUEM SERÁ O SORTUDO?"
+          : "A SORTE ESTÁ NO AR";
+  const { rows, columns } = boardLayout(words);
   return (
     <div
-      className={`letter-board ${phase === "revealing" ? "revealing" : ""}`}
+      className={`letter-board ${phase === "revealing" ? "revealing" : ""} ${columns > 14 ? "long-name" : ""}`}
+      style={{ "--columns": columns } as CSSProperties}
       aria-hidden="true"
     >
       {rows.map((row, rowIndex) => {
-        const text = row.slice(0, 14);
-        const padding = Math.floor((14 - text.length) / 2);
+        const text = row;
+        const padding = Math.floor((columns - text.length) / 2);
         return (
           <div className="letter-row" key={rowIndex}>
-            {Array.from({ length: 14 }, (_, index) => {
+            {Array.from({ length: columns }, (_, index) => {
               const letter = text[index - padding];
               return (
                 <span
@@ -91,7 +112,7 @@ function LetterBoard({ phase, winner }: { phase: Phase; winner: Draw | null }) {
                   className={`letter ${letter && letter !== " " ? "filled" : ""}`}
                   style={
                     {
-                      "--delay": `${(rowIndex * 14 + index) * 42}ms`,
+                      "--delay": `${(rowIndex * columns + index) * (1200 / (columns * 4))}ms`,
                     } as CSSProperties
                   }
                 >
@@ -107,7 +128,22 @@ function LetterBoard({ phase, winner }: { phase: Phase; winner: Draw | null }) {
 }
 
 export function App() {
-  const [saved] = useState(initialState);
+  const demo =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("demo") === "500";
+  const [saved] = useState<SavedState>(() =>
+    demo
+      ? {
+          participants: Array.from({ length: 500 }, (_, index) => ({
+            id: `demo-${index + 1}`,
+            name: `Pessoa ${String(index + 1).padStart(3, "0")}`,
+          })),
+          draws: [],
+          excludeWinners: true,
+          duration: 5,
+        }
+      : initialState(),
+  );
   const [participants, setParticipants] = useState(saved.participants);
   const [draws, setDraws] = useState(saved.draws);
   const [excludeWinners, setExcludeWinners] = useState(saved.excludeWinners);
@@ -119,16 +155,17 @@ export function App() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [winner, setWinner] = useState<Draw | null>(null);
   const [rotation, setRotation] = useState(0);
-  const [wheelSnapshot, setWheelSnapshot] = useState<Participant[] | null>(
-    null,
+  const [wheelSnapshot, setWheelSnapshot] = useState<WheelEntry[] | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [effects, setEffects] = useState(true);
+  const [interactionMode, setInteractionMode] = useState<"orbit" | "spin">(
+    "orbit",
   );
-  const [sound, setSound] = useState(false);
-  const [soundtrack, setSoundtrack] = useState<"background" | "spin" | null>(
-    null,
-  );
+  const [soundtrack, setSoundtrack] = useState<Track | null>("background");
   const [panel, setPanel] = useState<Panel>(null);
   const [notice, setNotice] = useState("");
   const [presentation, setPresentation] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
   const [clearTarget, setClearTarget] = useState<
     "participants" | "results" | null
   >(null);
@@ -140,7 +177,8 @@ export function App() {
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
-  const running = phase === "spinning" || phase === "revealing";
+  const running = phase !== "idle" && phase !== "winner";
+  const spinning = phase === "spinning" || phase === "group-spinning";
   const revealedDraws = running
     ? draws.filter((draw) => draw.id !== winner?.id)
     : draws;
@@ -150,13 +188,50 @@ export function App() {
   const eligible = participants.filter(
     (person) => !excludeWinners || !winners.has(normalizeName(person.name)),
   );
-  const wheelPeople = wheelSnapshot ?? eligible;
+  const groups = visualGroups(eligible);
+  const wheelPeople =
+    wheelSnapshot ??
+    (groups.length ? groups.map((group) => group.entry) : eligible);
   const filteredPeople = participants.filter((person) =>
     normalizeName(person.name).includes(normalizeName(query)),
   );
   const round = Math.max(0, ...draws.map((draw) => draw.round)) + 1;
+  const stageLabel =
+    phase === "group-spinning"
+      ? "ETAPA 1 DE 2 · QUAL É O GRUPO DA SORTE?"
+      : phase === "group-revealing"
+        ? `${selectedGroup} · A SORTE CONTINUA`
+        : phase === "spinning" && selectedGroup
+          ? `ETAPA 2 DE 2 · ${selectedGroup}`
+          : phase === "spinning"
+            ? "SEGURA ESSA EMOÇÃO"
+            : phase === "revealing" || phase === "winner"
+              ? "TEMOS UM NOME DE SORTE"
+              : groups.length
+                ? `${eligible.length} NOMES · ${groups.length} GRUPOS VISUAIS`
+                : "QUEM SERÁ QUE VEM AÍ?";
+  const spinLabel =
+    phase === "group-spinning"
+      ? "Girando os grupos…"
+      : phase === "group-revealing"
+        ? `${selectedGroup} vem aí!`
+        : phase === "spinning"
+          ? "A sorte está girando…"
+          : phase === "revealing"
+            ? "E o nome de sorte é…"
+            : phase === "winner"
+              ? "Temos um vencedor!"
+              : !eligible.length && participants.length
+                ? "Todos já foram sorteados"
+                : "Girar a roleta";
 
   useEffect(() => {
+    const showAudio = audio.current;
+    return () => showAudio.dispose();
+  }, []);
+
+  useEffect(() => {
+    if (demo) return;
     if (!saveState({ participants, draws, excludeWinners, duration }))
       setNotice(
         "O navegador bloqueou o salvamento. Exporte os resultados antes de sair.",
@@ -192,7 +267,26 @@ export function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (phase !== "spinning") return;
+    audio.current.enabled = effects;
+    const prepare = () => {
+      if (effects) void audio.current.prepare().catch(() => {});
+    };
+    document.addEventListener("pointerdown", prepare, {
+      once: true,
+      capture: true,
+    });
+    document.addEventListener("keydown", prepare, {
+      once: true,
+      capture: true,
+    });
+    return () => {
+      document.removeEventListener("pointerdown", prepare, true);
+      document.removeEventListener("keydown", prepare, true);
+    };
+  }, [effects]);
+
+  useEffect(() => {
+    if (!spinning) return;
     const start = performance.now();
     const total = (reducedMotion ? 0.5 : duration) * 1000;
     let timeout: ReturnType<typeof setTimeout>;
@@ -250,20 +344,36 @@ export function App() {
     }
   }
 
-  async function toggleSound() {
-    if (sound) {
-      audio.current.enabled = false;
-      setSound(false);
-      setSoundtrack(null);
-      return;
-    }
+  async function toggleEffects() {
+    const next = !effects;
+    setEffects(next);
+    audio.current.enabled = next;
+    if (!next) return;
     try {
-      await audio.current.enable();
-      setSound(true);
+      await audio.current.prepare();
       audio.current.cue("reveal");
     } catch {
-      setNotice("Não foi possível ativar o áudio neste navegador.");
+      setNotice("Não foi possível ativar os efeitos neste navegador.");
     }
+  }
+
+  function chooseSoundtrack(track: Track) {
+    setSoundtrack(track);
+    setPanel(null);
+  }
+  function stopMusic() {
+    setSoundtrack(null);
+  }
+  function toggleMusic() {
+    setSoundtrack((current) =>
+      current
+        ? null
+        : phase === "winner"
+          ? "result"
+          : running
+            ? "spin"
+            : "background",
+    );
   }
 
   function celebrate() {
@@ -291,9 +401,10 @@ export function App() {
     );
   }
 
-  function spin() {
+  function spin(direction: 1 | -1 = 1) {
     if (busy.current || !eligible.length || phase === "winner") return;
     busy.current = true;
+    if (effects) void audio.current.prepare().catch(() => {});
     const pool = [...eligible];
     const index = randomIndex(pool.length);
     const person = pool[index];
@@ -308,6 +419,7 @@ export function App() {
     const nextDraws = [...draws, draw];
     // Commit the draw before the visual sequence: reloads cannot silently reroll it.
     if (
+      !demo &&
       !saveState({ participants, draws: nextDraws, excludeWinners, duration })
     )
       setNotice(
@@ -315,24 +427,58 @@ export function App() {
       );
     setWinner(draw);
     setDraws(nextDraws);
-    setWheelSnapshot(pool);
-    setRotation(landingRotation(rotation, index, pool.length));
-    setPhase("spinning");
+    setSelectedGroup(null);
     if (soundtrack) setSoundtrack("spin");
     const spinDuration = reducedMotion ? 500 : duration * 1000;
+    const revealWinner = () => {
+      setPhase("revealing");
+      audio.current.cue("reveal");
+      timers.current.push(
+        setTimeout(
+          () => {
+            setPhase("winner");
+            busy.current = false;
+            celebrate();
+            setSoundtrack((current) => (current ? "result" : null));
+          },
+          reducedMotion ? 100 : 1500,
+        ),
+      );
+    };
+    const drawGroups = visualGroups(pool);
+    if (!drawGroups.length) {
+      setWheelSnapshot(pool);
+      setRotation(entryLanding(rotation, index, pool, direction));
+      setPhase("spinning");
+      timers.current.push(setTimeout(revealWinner, spinDuration));
+      return;
+    }
+    const selection = groupForPerson(drawGroups, person.id);
+    const entries = drawGroups.map((group) => group.entry);
+    setWheelSnapshot(entries);
+    setRotation(entryLanding(rotation, selection.index, entries, direction));
+    setPhase("group-spinning");
     timers.current.push(
       setTimeout(() => {
-        setPhase("revealing");
+        setSelectedGroup(selection.group.entry.name);
+        setPhase("group-revealing");
         audio.current.cue("reveal");
         timers.current.push(
           setTimeout(
             () => {
-              setPhase("winner");
-              busy.current = false;
-              celebrate();
-              setSoundtrack((current) => (current ? "background" : null));
+              setWheelSnapshot(selection.group.members);
+              setRotation(
+                entryLanding(
+                  0,
+                  selection.memberIndex,
+                  selection.group.members,
+                  direction,
+                ),
+              );
+              setPhase("spinning");
+              timers.current.push(setTimeout(revealWinner, spinDuration));
             },
-            reducedMotion ? 100 : 1500,
+            reducedMotion ? 150 : 1200,
           ),
         );
       }, spinDuration),
@@ -340,11 +486,34 @@ export function App() {
   }
 
   function nextRound() {
+    setSoundtrack((current) => (current ? "background" : null));
     setPhase("idle");
     setWinner(null);
     setWheelSnapshot(null);
     setRotation(0);
+    setSelectedGroup(null);
   }
+
+  async function togglePresentation() {
+    if (presentation) {
+      setPresentation(false);
+      if (document.fullscreenElement)
+        await document.exitFullscreen().catch(() => {});
+      return;
+    }
+    setPresentation(true);
+    if (document.documentElement.requestFullscreen)
+      await document.documentElement.requestFullscreen().catch(() => {});
+  }
+
+  useEffect(() => {
+    const syncFullscreen = () => {
+      if (!document.fullscreenElement) setPresentation(false);
+    };
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () =>
+      document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
 
   function exportResults() {
     downloadFile(
@@ -370,7 +539,12 @@ export function App() {
   }
 
   return (
-    <div className={`app ${presentation ? "presentation" : ""}`}>
+    <div
+      className={`app game-view-${view} ${presentation ? "presentation" : ""} ${participantsOpen ? "participants-open" : ""}`}
+    >
+      <div className="studio-background" aria-hidden="true">
+        <img src="/images/studio-roda-v2.webp" alt="" fetchPriority="high" />
+      </div>
       <header className="site-header">
         <a
           className="brand"
@@ -384,11 +558,11 @@ export function App() {
           <span className="brand-symbol">
             <SpinnerBall size={29} weight="bold" />
           </span>
-          <span>
-            roda
-            <span className="brand-small">
-              da comunidade<span className="brand-star">✦</span>
-            </span>
+          <span className="brand-wordmark">
+            <strong>
+              RODA <small>A</small> RODA
+            </strong>
+            <span className="brand-small">DA COMUNIDADE</span>
           </span>
         </a>
         <nav aria-label="Navegação principal">
@@ -396,7 +570,7 @@ export function App() {
             className={view === "draw" ? "active" : ""}
             onClick={() => setView("draw")}
           >
-            <SpinnerBall size={18} /> O sorteio
+            <SpinnerBall size={18} /> Jogar
           </button>
           <button
             className={view === "results" ? "active" : ""}
@@ -410,11 +584,28 @@ export function App() {
           </button>
         </nav>
         <button className="how-button" onClick={() => setPanel("how")}>
-          <Info size={18} /> Como funciona
+          <Info size={18} /> Como jogar
         </button>
       </header>
+      {demo && (
+        <div className="demo-badge">
+          DEMONSTRAÇÃO · 500 NOMES · DADOS TEMPORÁRIOS
+        </div>
+      )}
 
       <main>
+        {view === "draw" && (
+          <button
+            className="participants-toggle"
+            aria-expanded={participantsOpen}
+            aria-controls="participants-panel"
+            onClick={() => setParticipantsOpen(!participantsOpen)}
+          >
+            <UsersThree size={20} /> Participantes{" "}
+            <span>{participants.length}</span>
+            <CaretDown size={16} />
+          </button>
+        )}
         <section className="page-heading">
           <div>
             <div className="eyebrow">
@@ -452,11 +643,11 @@ export function App() {
 
         {view === "draw" ? (
           <div className="draw-layout">
-            <aside className="participants-panel">
+            <aside className="participants-panel" id="participants-panel">
               <div className="panel-title">
                 <div>
                   <UsersThree size={23} weight="duotone" />
-                  <h2>Quem vai participar?</h2>
+                  <h2>Participantes</h2>
                 </div>
                 <span className="count-badge">{participants.length}</span>
               </div>
@@ -675,19 +866,29 @@ export function App() {
                   <div className="stage-tools">
                     <button
                       title={
-                        sound ? "Silenciar efeitos" : "Ativar efeitos sonoros"
+                        effects
+                          ? "Desativar efeitos sonoros"
+                          : "Ativar efeitos sonoros"
                       }
                       aria-label={
-                        sound ? "Silenciar efeitos" : "Ativar efeitos sonoros"
+                        effects
+                          ? "Desativar efeitos sonoros"
+                          : "Ativar efeitos sonoros"
                       }
-                      aria-pressed={sound}
-                      onClick={() => void toggleSound()}
+                      aria-pressed={effects}
+                      onClick={() => void toggleEffects()}
                     >
-                      {sound ? (
-                        <SpeakerHigh size={19} />
-                      ) : (
-                        <SpeakerSlash size={19} />
-                      )}
+                      <span
+                        className={`icon-swap ${effects ? "is-active" : ""}`}
+                        aria-hidden="true"
+                      >
+                        <span className="active-icon">
+                          <SpeakerHigh size={19} />
+                        </span>
+                        <span className="inactive-icon">
+                          <SpeakerSlash size={19} />
+                        </span>
+                      </span>
                     </button>
                     <button
                       title={
@@ -700,7 +901,7 @@ export function App() {
                           ? "Sair do modo apresentação"
                           : "Modo apresentação"
                       }
-                      onClick={() => setPresentation(!presentation)}
+                      onClick={() => void togglePresentation()}
                     >
                       {presentation ? (
                         <ArrowsIn size={19} />
@@ -711,25 +912,47 @@ export function App() {
                   </div>
                 </div>
                 <div className="board-label">
-                  <span />{" "}
-                  {phase === "spinning"
-                    ? "SEGURA ESSA EMOÇÃO"
-                    : phase === "revealing" || phase === "winner"
-                      ? "TEMOS UM NOME DE SORTE"
-                      : "QUEM SERÁ QUE VEM AÍ?"}{" "}
-                  <span />
+                  <span /> {stageLabel} <span />
                 </div>
-                <LetterBoard phase={phase} winner={winner} />
-                <RaffleWheel
+                <LetterBoard
+                  phase={phase}
+                  winner={winner}
+                  group={selectedGroup}
+                />
+                <ThreeWheel
                   people={wheelPeople}
                   rotation={rotation}
-                  spinning={phase === "spinning"}
+                  spinning={spinning}
                   duration={reducedMotion ? 0.5 : duration}
+                  reducedMotion={reducedMotion}
+                  onPlay={() => spin()}
+                  onDragPlay={spin}
+                  interactionMode={interactionMode}
+                  busy={running}
+                  disabled={running || phase === "winner" || !eligible.length}
                 />
+                <div className="game-scoreboard">
+                  <span className="scoreboard-icon">
+                    <UsersThree size={21} weight="duotone" />
+                  </span>
+                  <strong>{eligible.length}</strong>
+                  <span>NA DISPUTA</span>
+                  <div />
+                  <span className="scoreboard-chance">CHANCE INDIVIDUAL</span>
+                  <b>
+                    {eligible.length ? `1 em ${eligible.length}` : "Boa sorte!"}
+                  </b>
+                </div>
                 <div className="stage-floor" />
                 <div className="stage-caption">
                   <Sparkle size={13} weight="fill" />
-                  <span>INSPIRADO NOS CLÁSSICOS DE AUDITÓRIO</span>
+                  <span>
+                    {phase === "spinning"
+                      ? "A PRÓXIMA VOLTA PODE SER SUA"
+                      : phase === "revealing"
+                        ? "E O NOME DE SORTE É…"
+                        : "O PALCO É NOSSO. A SORTE É SUA."}
+                  </span>
                   <Sparkle size={13} weight="fill" />
                 </div>
                 {phase === "winner" && winner && (
@@ -738,10 +961,10 @@ export function App() {
                       <div className="winner-medal">
                         <Trophy size={31} weight="fill" />
                       </div>
-                      <span className="eyebrow">A SORTE ESCOLHEU VOCÊ!</span>
+                      <span className="eyebrow">É SEU NOME NO PAINEL!</span>
                       <h2>{winner.name}</h2>
                       <p>Essa rodada é sua. Pode comemorar!</p>
-                      <button onClick={nextRound}>
+                      <button autoFocus onClick={nextRound}>
                         Bora para a próxima <ArrowRight size={18} />
                       </button>
                       <button className="celebrate-again" onClick={celebrate}>
@@ -756,32 +979,46 @@ export function App() {
                 <button
                   className={`spin-button ${running ? "spinning" : ""}`}
                   disabled={!eligible.length || running || phase === "winner"}
-                  onClick={spin}
+                  onClick={() => spin()}
                 >
                   {running ? (
                     <SpinnerGap size={22} className="spinner" />
                   ) : (
                     <Play size={21} weight="fill" />
                   )}
-                  <span>
-                    {phase === "spinning"
-                      ? "A sorte está girando…"
-                      : phase === "revealing"
-                        ? "E o nome de sorte é…"
-                        : phase === "winner"
-                          ? "Temos um vencedor!"
-                          : !eligible.length && participants.length
-                            ? "Todos já foram sorteados"
-                            : "Girar a roleta"}
-                  </span>
+                  <span>{spinLabel}</span>
                   {!running && phase !== "winner" && (
                     <span className="button-spark">✦</span>
                   )}
                 </button>
+                <div
+                  className="wheel-input-modes"
+                  role="group"
+                  aria-label="Modo de interação da roleta"
+                >
+                  <button
+                    aria-pressed={interactionMode === "orbit"}
+                    disabled={running}
+                    onClick={() => setInteractionMode("orbit")}
+                  >
+                    Explorar 3D
+                  </button>
+                  <button
+                    aria-pressed={interactionMode === "spin"}
+                    disabled={running}
+                    onClick={() => setInteractionMode("spin")}
+                  >
+                    Girar arrastando
+                  </button>
+                </div>
                 <div className="duration-control">
                   <Clock size={21} />
                   <div>
-                    <label htmlFor="duration">Um pouco de suspense</label>
+                    <label htmlFor="duration">
+                      {groups.length
+                        ? "Suspense por etapa"
+                        : "Um pouco de suspense"}
+                    </label>
                     <div className="select-wrapper">
                       <select
                         id="duration"
@@ -806,20 +1043,37 @@ export function App() {
                   onClick={() => setPanel("settings")}
                 >
                   <GearSix size={22} />
+                  <span className="settings-label">Configurações</span>
                 </button>
+                <div className="audio-toggles">
+                  <button
+                    className="audio-toggle"
+                    aria-pressed={effects}
+                    onClick={() => void toggleEffects()}
+                  >
+                    {effects ? (
+                      <SpeakerHigh size={18} />
+                    ) : (
+                      <SpeakerSlash size={18} />
+                    )}{" "}
+                    {effects ? "Efeitos ligados" : "Efeitos desligados"}
+                  </button>
+                  <button
+                    className="audio-toggle"
+                    aria-pressed={!!soundtrack}
+                    onClick={toggleMusic}
+                  >
+                    <MusicNotes size={18} />{" "}
+                    {soundtrack ? "Música ligada" : "Música desligada"}
+                  </button>
+                </div>
               </div>
               <div className="show-bottom">
                 <span>
-                  <CheckCircle size={15} /> Todo mundo com a mesma chance.
+                  <CheckCircle size={15} /> Mesma chance para cada pessoa.
                 </span>
-                <button onClick={() => setPanel("music")}>
-                  <MusicNotes size={17} weight="duotone" />{" "}
-                  {soundtrack
-                    ? "A nostalgia está tocando"
-                    : "Dê o play na nostalgia"}{" "}
-                  <ArrowRight size={13} />
-                </button>
               </div>
+
               {draws.length > 0 && phase !== "winner" && (
                 <div className="last-result">
                   <span className="small-trophy">
@@ -925,17 +1179,21 @@ export function App() {
       {presentation && (
         <button
           className="exit-presentation"
-          onClick={() => setPresentation(false)}
+          onClick={() => void togglePresentation()}
         >
           <ArrowsIn size={17} /> Sair da apresentação <kbd>esc</kbd>
         </button>
       )}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {phase === "spinning"
-          ? "Sorteio em andamento."
-          : phase === "revealing" && winner
-            ? `O vencedor é ${winner.name}. Resultado salvo.`
-            : ""}
+        {phase === "group-spinning"
+          ? "Sorteio em andamento. Apresentando o grupo do vencedor."
+          : phase === "group-revealing"
+            ? `${selectedGroup}. Preparando a revelação do nome.`
+            : phase === "spinning"
+              ? "Sorteio em andamento."
+              : phase === "revealing" && winner
+                ? `O vencedor é ${winner.name}. Resultado salvo.`
+                : ""}
       </div>
       {notice && (
         <div className="toast" role="status">
@@ -983,12 +1241,12 @@ export function App() {
               <label className="toggle-row">
                 <span>
                   <strong>Efeitos sonoros</strong>
-                  <small>Cliques da roleta e fanfarra de vitória.</small>
+                  <small>Cliques da roleta, revelação e comemoração.</small>
                 </span>
                 <input
                   type="checkbox"
-                  checked={sound}
-                  onChange={() => void toggleSound()}
+                  checked={effects}
+                  onChange={() => void toggleEffects()}
                 />
                 <span className="toggle-track" />
               </label>
@@ -999,6 +1257,24 @@ export function App() {
                   histórico para guardar ou compartilhar.
                 </p>
               </div>
+              <label className="toggle-row">
+                <span>
+                  <strong>Música de fundo</strong>
+                  <small>Intro e roleta com troca automática.</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={!!soundtrack}
+                  onChange={toggleMusic}
+                />
+                <span className="toggle-track" />
+              </label>
+              <button
+                className="secondary-button full"
+                onClick={() => setPanel("music")}
+              >
+                <MusicNotes size={18} /> Ouvir as trilhas
+              </button>
               <button
                 className="secondary-button full"
                 disabled={!draws.length}
@@ -1047,6 +1323,20 @@ export function App() {
                 </li>
               </ol>
               <div className="settings-note">
+                <UsersThree size={20} />
+                <p>
+                  Acima de 48 nomes, a apresentação tem duas etapas: grupo e
+                  pessoa, com até 25 nomes por grupo. O vencedor é sorteado uma
+                  única vez entre todos. As fatias dos grupos são proporcionais
+                  ao tamanho de cada grupo.
+                </p>
+              </div>
+              <p className="audit-note">
+                O sorteio é local. A aleatoriedade criptográfica evita
+                previsibilidade, mas não constitui uma auditoria externa contra
+                alterações feitas pelo organizador no próprio navegador.
+              </p>
+              <div className="settings-note">
                 <Info size={20} />
                 <p>
                   Uma homenagem independente aos programas de auditório
@@ -1058,24 +1348,24 @@ export function App() {
           {panel === "music" && (
             <>
               <p className="dialog-intro">
-                As trilhas que você escolheu, direto do YouTube. A reprodução
-                depende da disponibilidade dos vídeos.
+                As trilhas que você escolheu, incluídas no próprio site. A
+                música da roleta entra automaticamente durante o giro.
               </p>
               <div className="music-options">
                 <button
                   className={soundtrack === "background" ? "selected" : ""}
-                  onClick={() => { setSoundtrack("background"); setPanel(null); }}
+                  onClick={() => void chooseSoundtrack("background")}
                 >
                   <MusicNotes size={22} />
                   <span>
-                    <strong>Clima de auditório</strong>
-                    <small>Trilha de fundo</small>
+                    <strong>Intro do programa</strong>
+                    <small>Trilha de fundo · arquivo local</small>
                   </span>
                   <Play size={18} weight="fill" />
                 </button>
                 <button
                   className={soundtrack === "spin" ? "selected" : ""}
-                  onClick={() => { setSoundtrack("spin"); setPanel(null); }}
+                  onClick={() => void chooseSoundtrack("spin")}
                 >
                   <SpinnerBall size={22} />
                   <span>
@@ -1084,16 +1374,24 @@ export function App() {
                   </span>
                   <Play size={18} weight="fill" />
                 </button>
+                <button
+                  className={soundtrack === "result" ? "selected" : ""}
+                  onClick={() => chooseSoundtrack("result")}
+                >
+                  <Trophy size={22} />
+                  <span>
+                    <strong>É hora de comemorar</strong>
+                    <small>Resultado do sorteio · MP3 local</small>
+                  </span>
+                  <Play size={18} weight="fill" />
+                </button>
               </div>
               <p className="music-tip">
-                Durante o sorteio, a trilha muda para a roleta. Se o navegador
-                bloquear o áudio, aperte play no player.
+                Durante o sorteio, a trilha muda para a roleta. Na primeira
+                interação, o navegador libera o áudio automaticamente.
               </p>
               {soundtrack && (
-                <button
-                  className="secondary-button full"
-                  onClick={() => setSoundtrack(null)}
-                >
+                <button className="secondary-button full" onClick={stopMusic}>
                   <SpeakerSlash size={17} /> Parar trilha
                 </button>
               )}
@@ -1112,34 +1410,14 @@ export function App() {
       )}
 
       {soundtrack && (
-        <div className="youtube-player">
-          <div>
-            <span>
-              <MusicNotes size={15} />{" "}
-              {soundtrack === "background"
-                ? "Clima de auditório"
-                : "Segura a emoção"}
-            </span>
-            <button
-              onClick={() => setSoundtrack(null)}
-              aria-label="Parar e fechar trilha"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <iframe
-            key={soundtrack}
-            title={
-              soundtrack === "background"
-                ? "Trilha de fundo do sorteio no YouTube"
-                : "Trilha da roleta rodando no YouTube"
-            }
-            src={`https://www.youtube.com/embed/${soundtrack === "background" ? "BOzaFMFzeJY" : "290hVMFdonE"}?autoplay=1&loop=1&playlist=${soundtrack === "background" ? "BOzaFMFzeJY" : "290hVMFdonE"}`}
-            allow="autoplay; encrypted-media; picture-in-picture"
-            allowFullScreen
-            referrerPolicy="strict-origin-when-cross-origin"
-          />
-        </div>
+        <LocalSoundtrack
+          track={soundtrack}
+          onEnded={() =>
+            setSoundtrack((current) =>
+              current === "result" ? "background" : current,
+            )
+          }
+        />
       )}
 
       {clearTarget && (

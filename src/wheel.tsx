@@ -1,4 +1,5 @@
-import type { Participant } from "./raffle";
+import { wheelSectors } from "./wheel-model";
+import type { WheelEntry } from "./wheel-model";
 
 export const WHEEL_COLORS = [
   "#f5c64f",
@@ -28,13 +29,13 @@ export function Wheel({
   spinning,
   duration,
 }: {
-  people: Participant[];
+  people: WheelEntry[];
   rotation: number;
   spinning: boolean;
   duration: number;
 }) {
   const count = Math.max(people.length, 1);
-  const step = 360 / count;
+  const sectors = wheelSectors(people);
   return (
     <div className={`wheel-assembly ${spinning ? "is-spinning" : ""}`}>
       <div className="wheel-shadow" />
@@ -54,12 +55,14 @@ export function Wheel({
           <svg
             viewBox="0 0 500 500"
             role="img"
-            aria-label={`Roleta com ${people.length} participantes com chances iguais`}
+            aria-label={`Roleta com ${people.length} ${people.some((person) => person.weight) ? "grupos com fatias proporcionais ao número de pessoas" : "participantes com chances iguais"}`}
           >
             <circle cx="250" cy="250" r="227" fill="#f8c74c" />
             {people.map((person, index) => {
-              const start = index * step - 90;
-              const end = start + step;
+              const sector = sectors[index];
+              const step = sector.end - sector.start;
+              const start = sector.start - 90;
+              const end = sector.end - 90;
               const first = point(start, RADIUS);
               const last = point(end, RADIUS);
               const centerAngle = start + step / 2;

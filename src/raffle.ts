@@ -7,7 +7,7 @@ export type Draw = {
   round: number;
   poolSize: number;
 };
-export const MAX_PARTICIPANTS = 300;
+export const MAX_PARTICIPANTS = 1000;
 export const INITIAL_NAMES = [
   "Ana Souza",
   "Bruno Lima",
