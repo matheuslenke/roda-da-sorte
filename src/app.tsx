@@ -1,0 +1,1215 @@
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ChangeEvent } from "react";
+import {
+  ArrowRight,
+  ArrowsIn,
+  ArrowsOut,
+  CaretDown,
+  Check,
+  CheckCircle,
+  Clock,
+  DownloadSimple,
+  FileCsv,
+  GearSix,
+  Info,
+  ListBullets,
+  MusicNotes,
+  Play,
+  Plus,
+  SpeakerHigh,
+  SpeakerSlash,
+  Sparkle,
+  SpinnerGap,
+  Ticket,
+  Trash,
+  Trophy,
+  UsersThree,
+  SpinnerBall,
+  X,
+} from "@phosphor-icons/react";
+import confetti from "canvas-confetti";
+import {
+  addNames,
+  csvResults,
+  INITIAL_NAMES,
+  landingRotation,
+  MAX_PARTICIPANTS,
+  normalizeName,
+  parseCsv,
+  randomIndex,
+} from "./raffle";
+import type { Draw, Participant } from "./raffle";
+import { initialState, saveState } from "./storage";
+import { ShowAudio } from "./audio";
+import { Wheel as RaffleWheel, WHEEL_COLORS } from "./wheel";
+
+type Phase = "idle" | "spinning" | "revealing" | "winner";
+type Panel = "settings" | "how" | "music" | null;
+const dateFormat = new Intl.DateTimeFormat("pt-BR", {
+  day: "2-digit",
+  month: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function downloadFile(content: string, name: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function LetterBoard({ phase, winner }: { phase: Phase; winner: Draw | null }) {
+  const reveal = (phase === "revealing" || phase === "winner") && winner;
+  const words = reveal
+    ? winner.name.toLocaleUpperCase("pt-BR")
+    : phase === "spinning"
+      ? "QUEM SERÁ O SORTUDO?"
+      : "A SORTE ESTÁ NO AR";
+  const rows: string[] = ["", ""];
+  for (const word of words.split(" ")) {
+    const row = rows[0].length + word.length + 1 <= 14 ? 0 : 1;
+    rows[row] = `${rows[row]} ${word}`.trim();
+  }
+  return (
+    <div
+      className={`letter-board ${phase === "revealing" ? "revealing" : ""}`}
+      aria-hidden="true"
+    >
+      {rows.map((row, rowIndex) => {
+        const text = row.slice(0, 14);
+        const padding = Math.floor((14 - text.length) / 2);
+        return (
+          <div className="letter-row" key={rowIndex}>
+            {Array.from({ length: 14 }, (_, index) => {
+              const letter = text[index - padding];
+              return (
+                <span
+                  key={`${phase}-${index}`}
+                  className={`letter ${letter && letter !== " " ? "filled" : ""}`}
+                  style={
+                    {
+                      "--delay": `${(rowIndex * 14 + index) * 42}ms`,
+                    } as CSSProperties
+                  }
+                >
+                  {letter && letter !== " " ? letter : ""}
+                </span>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function App() {
+  const [saved] = useState(initialState);
+  const [participants, setParticipants] = useState(saved.participants);
+  const [draws, setDraws] = useState(saved.draws);
+  const [excludeWinners, setExcludeWinners] = useState(saved.excludeWinners);
+  const [duration, setDuration] = useState(saved.duration);
+  const [nameInput, setNameInput] = useState("");
+  const [entryMode, setEntryMode] = useState<"single" | "list">("single");
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<"draw" | "results">("draw");
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [winner, setWinner] = useState<Draw | null>(null);
+  const [rotation, setRotation] = useState(0);
+  const [wheelSnapshot, setWheelSnapshot] = useState<Participant[] | null>(
+    null,
+  );
+  const [sound, setSound] = useState(false);
+  const [soundtrack, setSoundtrack] = useState<"background" | "spin" | null>(
+    null,
+  );
+  const [panel, setPanel] = useState<Panel>(null);
+  const [notice, setNotice] = useState("");
+  const [presentation, setPresentation] = useState(false);
+  const [clearTarget, setClearTarget] = useState<
+    "participants" | "results" | null
+  >(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const audio = useRef(new ShowAudio());
+  const busy = useRef(false);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [reducedMotion, setReducedMotion] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const running = phase === "spinning" || phase === "revealing";
+  const revealedDraws = running
+    ? draws.filter((draw) => draw.id !== winner?.id)
+    : draws;
+  const winners = new Set(
+    revealedDraws.map((draw) => normalizeName(draw.name)),
+  );
+  const eligible = participants.filter(
+    (person) => !excludeWinners || !winners.has(normalizeName(person.name)),
+  );
+  const wheelPeople = wheelSnapshot ?? eligible;
+  const filteredPeople = participants.filter((person) =>
+    normalizeName(person.name).includes(normalizeName(query)),
+  );
+  const round = Math.max(0, ...draws.map((draw) => draw.round)) + 1;
+
+  useEffect(() => {
+    if (!saveState({ participants, draws, excludeWinners, duration }))
+      setNotice(
+        "O navegador bloqueou o salvamento. Exporte os resultados antes de sair.",
+      );
+  }, [participants, draws, excludeWinners, duration]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const change = () => setReducedMotion(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPanel(null);
+        setClearTarget(null);
+        setPresentation(false);
+      }
+    };
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("keydown", escape);
+      timers.current.forEach(clearTimeout);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = setTimeout(() => setNotice(""), 6500);
+    return () => clearTimeout(timeout);
+  }, [notice]);
+
+  useEffect(() => {
+    if (phase !== "spinning") return;
+    const start = performance.now();
+    const total = (reducedMotion ? 0.5 : duration) * 1000;
+    let timeout: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      audio.current.cue("tick");
+      const progress = (performance.now() - start) / total;
+      if (progress < 0.98)
+        timeout = setTimeout(tick, 55 + Math.pow(progress, 3) * 440);
+    };
+    tick();
+    return () => clearTimeout(timeout);
+  }, [phase, duration, reducedMotion]);
+
+  function addParticipants(names: string[]) {
+    const result = addNames(participants, names);
+    setParticipants(result.participants);
+    setNameInput("");
+    setWheelSnapshot(null);
+    setRotation(0);
+    const messages = [
+      `${result.added} ${result.added === 1 ? "participante adicionado" : "participantes adicionados"}.`,
+    ];
+    if (result.duplicates)
+      messages.push(
+        `${result.duplicates} ${result.duplicates === 1 ? "duplicado ignorado" : "duplicados ignorados"}.`,
+      );
+    if (result.invalid)
+      messages.push(
+        `Limite de ${MAX_PARTICIPANTS} pessoas e 80 caracteres por nome.`,
+      );
+    setNotice(messages.join(" "));
+  }
+
+  async function importCsv(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 1_000_000) {
+      setNotice("Escolha um CSV de até 1 MB.");
+      return;
+    }
+    try {
+      const names = parseCsv(await file.text());
+      if (!names.length) {
+        setNotice(
+          "Nenhum nome encontrado. Use uma coluna chamada Nome ou a primeira coluna.",
+        );
+        return;
+      }
+      addParticipants(names);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Não foi possível ler o CSV.",
+      );
+    }
+  }
+
+  async function toggleSound() {
+    if (sound) {
+      audio.current.enabled = false;
+      setSound(false);
+      setSoundtrack(null);
+      return;
+    }
+    try {
+      await audio.current.enable();
+      setSound(true);
+      audio.current.cue("reveal");
+    } catch {
+      setNotice("Não foi possível ativar o áudio neste navegador.");
+    }
+  }
+
+  function celebrate() {
+    audio.current.cue("win");
+    if (reducedMotion) return;
+    void confetti({
+      particleCount: 110,
+      spread: 85,
+      origin: { x: 0.67, y: 0.57 },
+      colors: WHEEL_COLORS,
+      disableForReducedMotion: true,
+      zIndex: 100,
+    });
+    timers.current.push(
+      setTimeout(() => {
+        void confetti({
+          particleCount: 70,
+          angle: 125,
+          spread: 70,
+          origin: { x: 0.9, y: 0.55 },
+          colors: WHEEL_COLORS,
+          disableForReducedMotion: true,
+        });
+      }, 300),
+    );
+  }
+
+  function spin() {
+    if (busy.current || !eligible.length || phase === "winner") return;
+    busy.current = true;
+    const pool = [...eligible];
+    const index = randomIndex(pool.length);
+    const person = pool[index];
+    const draw: Draw = {
+      id: crypto.randomUUID(),
+      name: person.name,
+      participantId: person.id,
+      date: new Date().toISOString(),
+      round,
+      poolSize: pool.length,
+    };
+    const nextDraws = [...draws, draw];
+    // Commit the draw before the visual sequence: reloads cannot silently reroll it.
+    if (
+      !saveState({ participants, draws: nextDraws, excludeWinners, duration })
+    )
+      setNotice(
+        "Resultado nesta sessão. Exporte o histórico: o salvamento local foi bloqueado.",
+      );
+    setWinner(draw);
+    setDraws(nextDraws);
+    setWheelSnapshot(pool);
+    setRotation(landingRotation(rotation, index, pool.length));
+    setPhase("spinning");
+    if (soundtrack) setSoundtrack("spin");
+    const spinDuration = reducedMotion ? 500 : duration * 1000;
+    timers.current.push(
+      setTimeout(() => {
+        setPhase("revealing");
+        audio.current.cue("reveal");
+        timers.current.push(
+          setTimeout(
+            () => {
+              setPhase("winner");
+              busy.current = false;
+              celebrate();
+              setSoundtrack((current) => (current ? "background" : null));
+            },
+            reducedMotion ? 100 : 1500,
+          ),
+        );
+      }, spinDuration),
+    );
+  }
+
+  function nextRound() {
+    setPhase("idle");
+    setWinner(null);
+    setWheelSnapshot(null);
+    setRotation(0);
+  }
+
+  function exportResults() {
+    downloadFile(
+      csvResults(draws),
+      "resultados-roda-da-comunidade.csv",
+      "text/csv;charset=utf-8;",
+    );
+    setNotice("Resultados exportados. A festa fica registrada!");
+  }
+
+  function clearConfirmed() {
+    if (clearTarget === "participants") {
+      setParticipants([]);
+      setWheelSnapshot(null);
+      setRotation(0);
+      setQuery("");
+    }
+    if (clearTarget === "results") {
+      setDraws([]);
+      nextRound();
+    }
+    setClearTarget(null);
+  }
+
+  return (
+    <div className={`app ${presentation ? "presentation" : ""}`}>
+      <header className="site-header">
+        <a
+          className="brand"
+          href="#"
+          onClick={(event) => {
+            event.preventDefault();
+            if (!running) setView("draw");
+          }}
+          aria-label="Roda da Comunidade, início"
+        >
+          <span className="brand-symbol">
+            <SpinnerBall size={29} weight="bold" />
+          </span>
+          <span>
+            roda
+            <span className="brand-small">
+              da comunidade<span className="brand-star">✦</span>
+            </span>
+          </span>
+        </a>
+        <nav aria-label="Navegação principal">
+          <button
+            className={view === "draw" ? "active" : ""}
+            onClick={() => setView("draw")}
+          >
+            <SpinnerBall size={18} /> O sorteio
+          </button>
+          <button
+            className={view === "results" ? "active" : ""}
+            disabled={running}
+            onClick={() => setView("results")}
+          >
+            <Trophy size={18} /> Resultados{" "}
+            {draws.length > 0 && (
+              <span className="nav-count">{draws.length}</span>
+            )}
+          </button>
+        </nav>
+        <button className="how-button" onClick={() => setPanel("how")}>
+          <Info size={18} /> Como funciona
+        </button>
+      </header>
+
+      <main>
+        <section className="page-heading">
+          <div>
+            <div className="eyebrow">
+              <span /> A SORTE ESTÁ NO AR
+            </div>
+            <h1>
+              {view === "draw" ? (
+                <>
+                  Sua comunidade.
+                  <br className="mobile-break" /> Um grande <span>show.</span>
+                  <Sparkle className="heading-spark" weight="fill" />
+                </>
+              ) : (
+                <>
+                  Quem já teve a sua <span>vez.</span>
+                  <Sparkle className="heading-spark" weight="fill" />
+                </>
+              )}
+            </h1>
+            <p>
+              {view === "draw"
+                ? "Dê uma volta na nostalgia. O próximo nome pode ser o seu."
+                : "Cada rodada, uma história. Todos os vencedores ficam por aqui."}
+            </p>
+          </div>
+          <div className="heading-note">
+            <span className="little-spark">✳</span>
+            <span>
+              Um toque de nostalgia.
+              <br />
+              <strong>Uma rodada de emoção.</strong>
+            </span>
+          </div>
+        </section>
+
+        {view === "draw" ? (
+          <div className="draw-layout">
+            <aside className="participants-panel">
+              <div className="panel-title">
+                <div>
+                  <UsersThree size={23} weight="duotone" />
+                  <h2>Quem vai participar?</h2>
+                </div>
+                <span className="count-badge">{participants.length}</span>
+              </div>
+              <p className="panel-description">
+                O show começa com a sua galera.
+              </p>
+              <div
+                className="input-tabs"
+                role="group"
+                aria-label="Forma de adicionar nomes"
+              >
+                <button
+                  className={entryMode === "single" ? "selected" : ""}
+                  disabled={running || phase === "winner"}
+                  onClick={() => setEntryMode("single")}
+                >
+                  <Plus size={16} /> Nome a nome
+                </button>
+                <button
+                  className={entryMode === "list" ? "selected" : ""}
+                  disabled={running || phase === "winner"}
+                  onClick={() => setEntryMode("list")}
+                >
+                  <ListBullets size={16} /> Colar lista
+                </button>
+              </div>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  addParticipants(
+                    entryMode === "single"
+                      ? [nameInput]
+                      : nameInput.split(/\r?\n/),
+                  );
+                }}
+              >
+                <label className="sr-only" htmlFor="participant-names">
+                  {entryMode === "single"
+                    ? "Nome do participante"
+                    : "Lista de nomes, um por linha"}
+                </label>
+                {entryMode === "single" ? (
+                  <div className="name-field">
+                    <input
+                      id="participant-names"
+                      placeholder="Digite um nome…"
+                      maxLength={80}
+                      value={nameInput}
+                      disabled={running || phase === "winner"}
+                      onChange={(event) => setNameInput(event.target.value)}
+                    />
+                    <button
+                      aria-label="Adicionar participante"
+                      disabled={
+                        !nameInput.trim() || running || phase === "winner"
+                      }
+                    >
+                      <Plus size={21} weight="bold" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <textarea
+                      id="participant-names"
+                      rows={4}
+                      placeholder={"Ana Souza\nBruno Lima\nCamila Rocha"}
+                      value={nameInput}
+                      disabled={running || phase === "winner"}
+                      onChange={(event) => setNameInput(event.target.value)}
+                    />
+                    <button
+                      className="add-list"
+                      disabled={
+                        !nameInput.trim() || running || phase === "winner"
+                      }
+                    >
+                      <Plus size={16} /> Adicionar nomes
+                    </button>
+                  </>
+                )}
+              </form>
+              <button
+                className="csv-button"
+                disabled={running || phase === "winner"}
+                onClick={() => fileInput.current?.click()}
+              >
+                <FileCsv size={20} weight="duotone" /> Importar arquivo CSV{" "}
+                <ArrowRight size={16} />
+              </button>
+              <input
+                ref={fileInput}
+                className="sr-only"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={importCsv}
+                tabIndex={-1}
+                aria-label="Importar participantes de um CSV"
+              />
+              <div className="participants-divider" />
+              <div className="list-header">
+                <span>
+                  NA RODA <span>({participants.length})</span>
+                </span>
+                <button
+                  title="Limpar participantes"
+                  aria-label="Limpar todos os participantes"
+                  disabled={
+                    !participants.length || running || phase === "winner"
+                  }
+                  onClick={() => setClearTarget("participants")}
+                >
+                  <Trash size={16} />
+                </button>
+              </div>
+              {participants.length > 20 && (
+                <input
+                  className="search-input"
+                  aria-label="Buscar participante"
+                  placeholder="Buscar participante…"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              )}
+              <div className="participant-list">
+                {filteredPeople.map((person, index) => {
+                  const excluded =
+                    excludeWinners && winners.has(normalizeName(person.name));
+                  return (
+                    <div
+                      className={`participant ${excluded ? "excluded" : ""}`}
+                      key={person.id}
+                    >
+                      <span
+                        className="avatar"
+                        style={
+                          {
+                            "--avatar-color":
+                              WHEEL_COLORS[index % WHEEL_COLORS.length],
+                          } as CSSProperties
+                        }
+                      >
+                        {person.name
+                          .split(" ")
+                          .map((word) => word[0])
+                          .slice(0, 2)
+                          .join("")}
+                      </span>
+                      <span className="participant-name">
+                        {person.name}
+                        {excluded && (
+                          <small>
+                            Já levou a sorte <Trophy size={10} weight="fill" />
+                          </small>
+                        )}
+                      </span>
+                      <button
+                        aria-label={`Remover ${person.name}`}
+                        disabled={running || phase === "winner"}
+                        onClick={() => {
+                          setParticipants(
+                            participants.filter(
+                              (item) => item.id !== person.id,
+                            ),
+                          );
+                          setWheelSnapshot(null);
+                          setRotation(0);
+                        }}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+                {!filteredPeople.length && (
+                  <div className="empty-participants">
+                    <Ticket size={30} />
+                    <p>
+                      {query
+                        ? "Nenhum nome encontrado."
+                        : "O palco está pronto. Só falta a galera!"}
+                    </p>
+                    {!query && (
+                      <button onClick={() => addParticipants(INITIAL_NAMES)}>
+                        Usar lista de exemplo
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="participants-bottom">
+                <CheckCircle size={15} weight="fill" />
+                <span>
+                  {eligible.length}{" "}
+                  {eligible.length === 1 ? "pessoa pronta" : "pessoas prontas"}{" "}
+                  para a próxima rodada
+                </span>
+              </div>
+            </aside>
+
+            <section className="show-area" aria-label="Palco do sorteio">
+              <div ref={stageRef} className={`stage phase-${phase}`}>
+                <div className="stage-stars" aria-hidden="true">
+                  <span>✦</span>
+                  <span>✧</span>
+                  <span>✦</span>
+                  <span>✧</span>
+                  <span>✧</span>
+                </div>
+                <div className="spotlight spotlight-left" />
+                <div className="spotlight spotlight-right" />
+                <div className="stage-topline">
+                  <span className="on-air">
+                    <i /> NO AR <span>•</span> RODADA{" "}
+                    {String(winner?.round ?? round).padStart(2, "0")}
+                  </span>
+                  <div className="stage-tools">
+                    <button
+                      title={
+                        sound ? "Silenciar efeitos" : "Ativar efeitos sonoros"
+                      }
+                      aria-label={
+                        sound ? "Silenciar efeitos" : "Ativar efeitos sonoros"
+                      }
+                      aria-pressed={sound}
+                      onClick={() => void toggleSound()}
+                    >
+                      {sound ? (
+                        <SpeakerHigh size={19} />
+                      ) : (
+                        <SpeakerSlash size={19} />
+                      )}
+                    </button>
+                    <button
+                      title={
+                        presentation
+                          ? "Sair do modo apresentação"
+                          : "Modo apresentação"
+                      }
+                      aria-label={
+                        presentation
+                          ? "Sair do modo apresentação"
+                          : "Modo apresentação"
+                      }
+                      onClick={() => setPresentation(!presentation)}
+                    >
+                      {presentation ? (
+                        <ArrowsIn size={19} />
+                      ) : (
+                        <ArrowsOut size={19} />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="board-label">
+                  <span />{" "}
+                  {phase === "spinning"
+                    ? "SEGURA ESSA EMOÇÃO"
+                    : phase === "revealing" || phase === "winner"
+                      ? "TEMOS UM NOME DE SORTE"
+                      : "QUEM SERÁ QUE VEM AÍ?"}{" "}
+                  <span />
+                </div>
+                <LetterBoard phase={phase} winner={winner} />
+                <RaffleWheel
+                  people={wheelPeople}
+                  rotation={rotation}
+                  spinning={phase === "spinning"}
+                  duration={reducedMotion ? 0.5 : duration}
+                />
+                <div className="stage-floor" />
+                <div className="stage-caption">
+                  <Sparkle size={13} weight="fill" />
+                  <span>INSPIRADO NOS CLÁSSICOS DE AUDITÓRIO</span>
+                  <Sparkle size={13} weight="fill" />
+                </div>
+                {phase === "winner" && winner && (
+                  <div className="winner-backdrop">
+                    <div className="winner-card" role="status">
+                      <div className="winner-medal">
+                        <Trophy size={31} weight="fill" />
+                      </div>
+                      <span className="eyebrow">A SORTE ESCOLHEU VOCÊ!</span>
+                      <h2>{winner.name}</h2>
+                      <p>Essa rodada é sua. Pode comemorar!</p>
+                      <button onClick={nextRound}>
+                        Bora para a próxima <ArrowRight size={18} />
+                      </button>
+                      <button className="celebrate-again" onClick={celebrate}>
+                        <Sparkle size={16} /> Mais confete, por favor
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="show-controls">
+                <button
+                  className={`spin-button ${running ? "spinning" : ""}`}
+                  disabled={!eligible.length || running || phase === "winner"}
+                  onClick={spin}
+                >
+                  {running ? (
+                    <SpinnerGap size={22} className="spinner" />
+                  ) : (
+                    <Play size={21} weight="fill" />
+                  )}
+                  <span>
+                    {phase === "spinning"
+                      ? "A sorte está girando…"
+                      : phase === "revealing"
+                        ? "E o nome de sorte é…"
+                        : phase === "winner"
+                          ? "Temos um vencedor!"
+                          : !eligible.length && participants.length
+                            ? "Todos já foram sorteados"
+                            : "Girar a roleta"}
+                  </span>
+                  {!running && phase !== "winner" && (
+                    <span className="button-spark">✦</span>
+                  )}
+                </button>
+                <div className="duration-control">
+                  <Clock size={21} />
+                  <div>
+                    <label htmlFor="duration">Um pouco de suspense</label>
+                    <div className="select-wrapper">
+                      <select
+                        id="duration"
+                        disabled={running}
+                        value={duration}
+                        onChange={(event) =>
+                          setDuration(Number(event.target.value))
+                        }
+                      >
+                        <option value="5">5 segundos</option>
+                        <option value="8">8 segundos</option>
+                        <option value="12">12 segundos</option>
+                      </select>
+                      <CaretDown size={12} />
+                    </div>
+                  </div>
+                </div>
+                <button
+                  className="settings-button"
+                  title="Configurar o sorteio"
+                  aria-label="Configurar o sorteio"
+                  onClick={() => setPanel("settings")}
+                >
+                  <GearSix size={22} />
+                </button>
+              </div>
+              <div className="show-bottom">
+                <span>
+                  <CheckCircle size={15} /> Todo mundo com a mesma chance.
+                </span>
+                <button onClick={() => setPanel("music")}>
+                  <MusicNotes size={17} weight="duotone" />{" "}
+                  {soundtrack
+                    ? "A nostalgia está tocando"
+                    : "Dê o play na nostalgia"}{" "}
+                  <ArrowRight size={13} />
+                </button>
+              </div>
+              {draws.length > 0 && phase !== "winner" && (
+                <div className="last-result">
+                  <span className="small-trophy">
+                    <Trophy size={18} weight="duotone" />
+                  </span>
+                  <div>
+                    <span>ÚLTIMO NOME DE SORTE</span>
+                    <strong>
+                      {running
+                        ? (draws[draws.length - 2]?.name ??
+                          "Aguardando a revelação…")
+                        : draws[draws.length - 1].name}
+                    </strong>
+                  </div>
+                  <button disabled={running} onClick={() => setView("results")}>
+                    Ver resultados <ArrowRight size={15} />
+                  </button>
+                </div>
+              )}
+            </section>
+          </div>
+        ) : (
+          <section className="results-panel">
+            <div className="results-header">
+              <div>
+                <span className="eyebrow">O HALL DA SORTE</span>
+                <h2>
+                  {draws.length} {draws.length === 1 ? "motivo" : "motivos"}{" "}
+                  para comemorar.
+                </h2>
+              </div>
+              <button
+                className="secondary-button"
+                onClick={exportResults}
+                disabled={!draws.length}
+              >
+                <DownloadSimple size={18} /> Exportar CSV
+              </button>
+            </div>
+            {!draws.length ? (
+              <div className="results-empty">
+                <Trophy size={58} weight="duotone" />
+                <h3>A primeira volta ainda vem aí.</h3>
+                <p>
+                  Os nomes sorteados aparecerão aqui, salvos neste navegador.
+                </p>
+                <button
+                  className="secondary-button"
+                  onClick={() => setView("draw")}
+                >
+                  Ir para o sorteio <ArrowRight size={18} />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="results-grid">
+                  {[...draws].reverse().map((draw) => (
+                    <article className="result-card" key={draw.id}>
+                      <span className="result-round">
+                        RODADA {String(draw.round).padStart(2, "0")}
+                      </span>
+                      <Trophy
+                        className="result-trophy"
+                        size={27}
+                        weight="duotone"
+                      />
+                      <h3>{draw.name}</h3>
+                      <p>
+                        {dateFormat.format(new Date(draw.date))} <span>•</span>{" "}
+                        {draw.poolSize} participantes
+                      </p>
+                      <span className="result-saved">
+                        <Check size={13} /> Resultado salvo
+                      </span>
+                    </article>
+                  ))}
+                </div>
+                <button
+                  className="clear-results"
+                  onClick={() => setClearTarget("results")}
+                >
+                  <Trash size={15} /> Limpar histórico
+                </button>
+              </>
+            )}
+          </section>
+        )}
+
+        <footer>
+          <span>
+            Feito para juntar a galera<span className="footer-star">✳</span> e
+            deixar a sorte fazer o resto.
+          </span>
+          <span>
+            <span className="local-dot" />{" "}
+            {draws.length
+              ? "Resultados salvos neste navegador"
+              : "Sem cadastro. É só chegar e girar."}
+          </span>
+        </footer>
+      </main>
+
+      {presentation && (
+        <button
+          className="exit-presentation"
+          onClick={() => setPresentation(false)}
+        >
+          <ArrowsIn size={17} /> Sair da apresentação <kbd>esc</kbd>
+        </button>
+      )}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {phase === "spinning"
+          ? "Sorteio em andamento."
+          : phase === "revealing" && winner
+            ? `O vencedor é ${winner.name}. Resultado salvo.`
+            : ""}
+      </div>
+      {notice && (
+        <div className="toast" role="status">
+          <Info size={19} />
+          <span>{notice}</span>
+          <button onClick={() => setNotice("")} aria-label="Fechar aviso">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {panel && (
+        <Dialog
+          title={
+            panel === "settings"
+              ? "Do seu jeito"
+              : panel === "how"
+                ? "Todo grande show tem suas regras."
+                : "O som da nostalgia"
+          }
+          close={() => setPanel(null)}
+        >
+          {panel === "settings" && (
+            <>
+              <p className="dialog-intro">
+                Ajuste os detalhes. A emoção fica por nossa conta.
+              </p>
+              <label className="toggle-row">
+                <span>
+                  <strong>Uma chance para cada pessoa</strong>
+                  <small>Retirar vencedores das próximas rodadas.</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={excludeWinners}
+                  disabled={running || phase === "winner"}
+                  onChange={(event) => {
+                    setExcludeWinners(event.target.checked);
+                    setWheelSnapshot(null);
+                    setRotation(0);
+                  }}
+                />
+                <span className="toggle-track" />
+              </label>
+              <label className="toggle-row">
+                <span>
+                  <strong>Efeitos sonoros</strong>
+                  <small>Cliques da roleta e fanfarra de vitória.</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={sound}
+                  onChange={() => void toggleSound()}
+                />
+                <span className="toggle-track" />
+              </label>
+              <div className="settings-note">
+                <Info size={20} />
+                <p>
+                  Os resultados ficam salvos somente neste navegador. Exporte o
+                  histórico para guardar ou compartilhar.
+                </p>
+              </div>
+              <button
+                className="secondary-button full"
+                disabled={!draws.length}
+                onClick={exportResults}
+              >
+                <DownloadSimple size={18} /> Exportar resultados
+              </button>
+            </>
+          )}
+          {panel === "how" && (
+            <>
+              <p className="dialog-intro">
+                O clima é de TV. A estrela é a sua comunidade.
+              </p>
+              <ol className="how-steps">
+                <li>
+                  <span>01</span>
+                  <div>
+                    <strong>Chame a galera</strong>
+                    <p>
+                      Adicione nomes, cole uma lista ou importe um CSV. Nomes
+                      repetidos são ignorados.
+                    </p>
+                  </div>
+                </li>
+                <li>
+                  <span>02</span>
+                  <div>
+                    <strong>Deixe a sorte girar</strong>
+                    <p>
+                      Cada pessoa ativa tem a mesma chance. O sorteio usa a
+                      aleatoriedade criptográfica do navegador, e a roleta
+                      acompanha o resultado.
+                    </p>
+                  </div>
+                </li>
+                <li>
+                  <span>03</span>
+                  <div>
+                    <strong>Comemore sem moderação</strong>
+                    <p>
+                      O vencedor aparece no painel e fica salvo antes da
+                      animação. Recarregar a página não refaz o sorteio.
+                    </p>
+                  </div>
+                </li>
+              </ol>
+              <div className="settings-note">
+                <Info size={20} />
+                <p>
+                  Uma homenagem independente aos programas de auditório
+                  brasileiros, sem vínculo com o SBT ou a Jequiti.
+                </p>
+              </div>
+            </>
+          )}
+          {panel === "music" && (
+            <>
+              <p className="dialog-intro">
+                As trilhas que você escolheu, direto do YouTube. A reprodução
+                depende da disponibilidade dos vídeos.
+              </p>
+              <div className="music-options">
+                <button
+                  className={soundtrack === "background" ? "selected" : ""}
+                  onClick={() => { setSoundtrack("background"); setPanel(null); }}
+                >
+                  <MusicNotes size={22} />
+                  <span>
+                    <strong>Clima de auditório</strong>
+                    <small>Trilha de fundo</small>
+                  </span>
+                  <Play size={18} weight="fill" />
+                </button>
+                <button
+                  className={soundtrack === "spin" ? "selected" : ""}
+                  onClick={() => { setSoundtrack("spin"); setPanel(null); }}
+                >
+                  <SpinnerBall size={22} />
+                  <span>
+                    <strong>Segura a emoção</strong>
+                    <small>Roleta rodando</small>
+                  </span>
+                  <Play size={18} weight="fill" />
+                </button>
+              </div>
+              <p className="music-tip">
+                Durante o sorteio, a trilha muda para a roleta. Se o navegador
+                bloquear o áudio, aperte play no player.
+              </p>
+              {soundtrack && (
+                <button
+                  className="secondary-button full"
+                  onClick={() => setSoundtrack(null)}
+                >
+                  <SpeakerSlash size={17} /> Parar trilha
+                </button>
+              )}
+              <a
+                className="reference-link"
+                href="https://www.youtube.com/watch?v=ZLvw15d1TT8"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Revisitar o programa que inspirou o palco{" "}
+                <ArrowRight size={15} />
+              </a>
+            </>
+          )}
+        </Dialog>
+      )}
+
+      {soundtrack && (
+        <div className="youtube-player">
+          <div>
+            <span>
+              <MusicNotes size={15} />{" "}
+              {soundtrack === "background"
+                ? "Clima de auditório"
+                : "Segura a emoção"}
+            </span>
+            <button
+              onClick={() => setSoundtrack(null)}
+              aria-label="Parar e fechar trilha"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <iframe
+            key={soundtrack}
+            title={
+              soundtrack === "background"
+                ? "Trilha de fundo do sorteio no YouTube"
+                : "Trilha da roleta rodando no YouTube"
+            }
+            src={`https://www.youtube.com/embed/${soundtrack === "background" ? "BOzaFMFzeJY" : "290hVMFdonE"}?autoplay=1&loop=1&playlist=${soundtrack === "background" ? "BOzaFMFzeJY" : "290hVMFdonE"}`}
+            allow="autoplay; encrypted-media; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        </div>
+      )}
+
+      {clearTarget && (
+        <Dialog
+          title={
+            clearTarget === "participants"
+              ? "Esvaziar a roda?"
+              : "Limpar os resultados?"
+          }
+          close={() => setClearTarget(null)}
+        >
+          <p className="dialog-intro">
+            {clearTarget === "participants"
+              ? "Todos os participantes serão removidos. Os resultados anteriores continuam no histórico."
+              : "O histórico salvo será apagado e todos poderão participar novamente. Exporte o CSV antes, se quiser guardar."}
+          </p>
+          <div className="confirm-actions">
+            <button
+              className="secondary-button"
+              onClick={() => setClearTarget(null)}
+            >
+              Voltar
+            </button>
+            <button className="danger-button" onClick={clearConfirmed}>
+              <Trash size={17} />{" "}
+              {clearTarget === "participants"
+                ? "Remover participantes"
+                : "Limpar histórico"}
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+function Dialog({
+  title,
+  children,
+  close,
+}: {
+  title: string;
+  children: React.ReactNode;
+  close: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialogRef.current?.showModal();
+  }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
+    >
+      <div className="dialog-content">
+        <div className="dialog-title">
+          <h2>{title}</h2>
+          <button onClick={close} aria-label="Fechar janela">
+            <X size={22} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </dialog>
+  );
+}
