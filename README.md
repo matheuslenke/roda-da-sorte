@@ -22,7 +22,7 @@ Para testar 500 participantes sem alterar a lista nem o histórico reais, abra `
 - Resultado salvo em `localStorage` antes da animação, histórico e exportação CSV. O histórico é local, não é uma auditoria externa e pode ser alterado pelo dono do navegador.
 - Exclusão opcional de vencedores, suspense de 5/8/12 segundos, painel de letras, confetes, modo apresentação e respeito a movimento reduzido.
 - Roleta 3D em Three.js com aro, pinos, luzes e espessura. Arraste para orbitar, use as setas do teclado ou restaure o ângulo inicial. O Play central acompanha a projeção da peça em 3D. Há fallback em SVG para dispositivos sem WebGL e recuperação de perda de contexto.
-- Cenário gerado em WebP preenchendo a tela, painel compacto lateral, controles nas laterais, fontes locais e modo de apresentação com fullscreen nativo quando disponível.
+- Cenário gerado em WebP preenchendo a tela, painel compacto lateral, configurações em um botão flutuante, fontes locais e modo de apresentação com fullscreen nativo quando disponível.
 - Efeitos sonoros ativados por padrão, com botão dedicado e independente da música. As duas trilhas enviadas pelo usuário estão em `public/audio/intro.mp3` e `public/audio/roleta.mp3`. A intro toca no início e a trilha da roleta entra automaticamente durante o sorteio. Não há player externo. O navegador pode exigir a primeira interação para liberar áudio.
 
 O prompt final do cenário, as fontes e as origens das trilhas estão em [docs/studio-assets.md](docs/studio-assets.md).
@@ -35,4 +35,6 @@ Modos do mouse: **Explorar 3D** altera o ângulo; **Girar arrastando** permite s
 
 Volume: controles separados de 0 a 100% para música e efeitos, salvos neste navegador e aplicados sem reiniciar a trilha. Os botões de ligar/desligar preservam o nível escolhido.
 
-Duração variável: escolha 12–16, 16–22 (padrão) ou 22–30 segundos por etapa. Cada etapa sorteia sua duração independentemente do vencedor, em intervalos de 0,25 s; a animação e os efeitos usam o mesmo tempo. Giros mais longos também têm mais voltas. A preferência por movimento reduzido mantém a versão curta.
+Duração automática: 16–22 segundos por etapa, sem seletor de tempo. Cada etapa sorteia sua duração independentemente do vencedor, em intervalos de 0,25 s; a animação e os efeitos usam o mesmo tempo. Giros mais longos também têm mais voltas. A preferência por movimento reduzido mantém a versão curta.
+
+O botão flutuante Configurações reúne modo do mouse, volumes, ligar/desligar áudio, exclusão de vencedores e exportação. O painel abre sob demanda e fecha com Esc, clique fora ou pelo botão Fechar, liberando o palco para a roleta.

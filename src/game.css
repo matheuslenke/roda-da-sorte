@@ -2212,6 +2212,202 @@ dialog::backdrop {
 }
 
 @media (min-width: 741px) and (max-width: 1100px) {
-  .app .stage { --wheel-size: min(calc(100dvh - 360px), 73vw, 900px); }
-  .app .three-wheel-shell { top: 44%; }
+  .app .stage {
+    --wheel-size: min(calc(100dvh - 360px), 73vw, 900px);
+  }
+  .app .three-wheel-shell {
+    top: 44%;
+  }
+}
+
+/* Settings stay off the stage until requested. Native popover supplies light dismiss and Escape. */
+.floating-settings-button {
+  position: fixed;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 0 18px;
+  border: 1px solid #fff0b58c;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #ffe8a8, #eabc54);
+  color: #182449;
+  box-shadow:
+    0 8px 30px #0008,
+    inset 0 1px 0 #fff9;
+  font:
+    700 12px "Outfit",
+    sans-serif;
+  cursor: pointer;
+  transition:
+    transform 0.16s,
+    box-shadow 0.16s;
+}
+.floating-settings-button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 36px #0009,
+    0 0 22px #f4cf7033;
+}
+.floating-settings-button:active {
+  transform: scale(0.96);
+}
+.floating-settings-button:focus-visible,
+.floating-settings button:focus-visible {
+  outline: 2px solid #fff1ba;
+  outline-offset: 4px;
+}
+.floating-settings {
+  position: fixed;
+  inset: auto max(24px, env(safe-area-inset-right)) 92px auto;
+  margin: 0;
+  width: min(350px, calc(100vw - 32px));
+  max-height: calc(100dvh - 120px);
+  padding: 20px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #6b83af55 transparent;
+  overscroll-behavior: contain;
+  border: 1px solid #8db8ef66;
+  border-radius: 22px;
+  color: #e6edfa;
+  background: #0d1c3ff5;
+  box-shadow:
+    0 22px 80px #0009,
+    inset 0 1px 0 #e4f0ff1a;
+  backdrop-filter: blur(20px);
+  font:
+    400 13px "Outfit",
+    sans-serif;
+}
+.floating-settings::backdrop {
+  background: transparent;
+}
+.floating-settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.floating-settings-heading h2 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+}
+.floating-settings-heading button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #ffffff20;
+  border-radius: 50%;
+  color: #d8e5fa;
+  background: #ffffff08;
+  cursor: pointer;
+}
+.floating-settings-intro {
+  margin: 2px 0 20px;
+  font-size: 12px;
+  color: #9fb5d8;
+}
+.floating-settings h3 {
+  margin: 18px 0 10px;
+  color: #c6d7ef;
+  font-size: 11px;
+  font-weight: 600;
+}
+.app .floating-settings .wheel-input-modes {
+  flex-direction: row;
+  width: 100%;
+}
+.floating-settings .wheel-input-modes button {
+  flex: 1;
+  min-height: 42px;
+  padding: 0 6px;
+}
+.app .floating-settings .audio-toggles {
+  flex-direction: column;
+  gap: 15px;
+}
+.app .floating-settings .audio-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.floating-settings .volume-control {
+  font-size: 11px;
+}
+.floating-settings .volume-control input {
+  height: 32px;
+}
+.floating-settings .toggle-row {
+  margin: 12px 0;
+  padding: 12px 0;
+}
+.floating-settings .toggle-row strong {
+  color: #e0e9f8;
+  font-size: 12px;
+}
+.floating-settings .toggle-row small {
+  color: #9fb5d8;
+  font-size: 10px;
+}
+.floating-settings .secondary-button {
+  min-height: 42px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+.local-soundtrack {
+  right: 215px;
+  bottom: 16px;
+}
+@media (max-width: 1100px) {
+  .app .stage {
+    --wheel-size: min(calc(100dvh - 140px), 85vw, 1000px);
+  }
+  .app .three-wheel-shell {
+    top: 50%;
+  }
+}
+@media (max-width: 740px) {
+  .floating-settings-button {
+    right: 16px;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    width: 54px;
+    padding: 0;
+  }
+  .floating-settings-button > span {
+    display: none;
+  }
+  .floating-settings {
+    right: 16px;
+    bottom: 86px;
+    padding: 18px;
+    max-height: calc(100dvh - 110px);
+  }
+  .app .stage {
+    --wheel-size: min(112vw, calc(100dvh - 235px));
+  }
+  .app .three-wheel-shell {
+    top: 55%;
+  }
+  .local-soundtrack {
+    right: auto;
+    left: 16px;
+    bottom: 23px;
+    translate: none;
+  }
+  .local-soundtrack.music-blocked {
+    bottom: 23px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .floating-settings-button {
+    transition: none;
+  }
 }

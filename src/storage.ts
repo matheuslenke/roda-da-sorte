@@ -6,7 +6,6 @@ export type SavedState = {
   participants: Participant[];
   draws: Draw[];
   excludeWinners: boolean;
-  duration: number;
 };
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -64,9 +63,6 @@ export function initialState(): SavedState {
           participants,
           draws,
           excludeWinners: value.excludeWinners !== false,
-          duration: [12, 16, 22].includes(Number(value.duration))
-            ? Number(value.duration)
-            : 16,
         };
       }
     }
@@ -80,7 +76,6 @@ export function initialState(): SavedState {
     })),
     draws: [],
     excludeWinners: true,
-    duration: 16,
   };
 }
 

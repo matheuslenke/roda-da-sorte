@@ -7,7 +7,6 @@ import {
   CaretDown,
   Check,
   CheckCircle,
-  Clock,
   DownloadSimple,
   FileCsv,
   GearSix,
@@ -19,7 +18,6 @@ import {
   SpeakerHigh,
   SpeakerSlash,
   Sparkle,
-  SpinnerGap,
   Ticket,
   Trash,
   Trophy,
@@ -48,7 +46,7 @@ import { LocalSoundtrack } from "./local-soundtrack";
 import type { Track } from "./local-soundtrack";
 import { entryLanding, groupForPerson, visualGroups } from "./wheel-model";
 import type { WheelEntry } from "./wheel-model";
-import { randomSpinSeconds, SPIN_RANGES } from "./spin-timing";
+import { randomSpinSeconds } from "./spin-timing";
 import { readSoundLevels, saveSoundLevels } from "./sound-settings";
 
 type Phase =
@@ -58,7 +56,7 @@ type Phase =
   | "spinning"
   | "revealing"
   | "winner";
-type Panel = "settings" | "how" | "music" | null;
+type Panel = "how" | "music" | null;
 const dateFormat = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "2-digit",
@@ -142,15 +140,13 @@ export function App() {
           })),
           draws: [],
           excludeWinners: true,
-          duration: 16,
         }
       : initialState(),
   );
   const [participants, setParticipants] = useState(saved.participants);
   const [draws, setDraws] = useState(saved.draws);
   const [excludeWinners, setExcludeWinners] = useState(saved.excludeWinners);
-  const [duration, setDuration] = useState(saved.duration);
-  const [activeSpinSeconds, setActiveSpinSeconds] = useState(saved.duration);
+  const [activeSpinSeconds, setActiveSpinSeconds] = useState(16);
   const [levels, setLevels] = useState(readSoundLevels);
   const [nameInput, setNameInput] = useState("");
   const [entryMode, setEntryMode] = useState<"single" | "list">("single");
@@ -178,6 +174,7 @@ export function App() {
   const busy = useRef(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const stageRef = useRef<HTMLDivElement>(null);
+  const settingsPopover = useRef<HTMLDivElement>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
@@ -214,21 +211,6 @@ export function App() {
               : groups.length
                 ? `${eligible.length} NOMES · ${groups.length} GRUPOS VISUAIS`
                 : "QUEM SERÁ QUE VEM AÍ?";
-  const spinLabel =
-    phase === "group-spinning"
-      ? "Girando os grupos…"
-      : phase === "group-revealing"
-        ? `${selectedGroup} vem aí!`
-        : phase === "spinning"
-          ? "A sorte está girando…"
-          : phase === "revealing"
-            ? "E o nome de sorte é…"
-            : phase === "winner"
-              ? "Temos um vencedor!"
-              : !eligible.length && participants.length
-                ? "Todos já foram sorteados"
-                : "Girar a roleta";
-
   useEffect(() => {
     const showAudio = audio.current;
     return () => showAudio.dispose();
@@ -236,11 +218,11 @@ export function App() {
 
   useEffect(() => {
     if (demo) return;
-    if (!saveState({ participants, draws, excludeWinners, duration }))
+    if (!saveState({ participants, draws, excludeWinners }))
       setNotice(
         "O navegador bloqueou o salvamento. Exporte os resultados antes de sair.",
       );
-  }, [participants, draws, excludeWinners, duration]);
+  }, [participants, draws, excludeWinners]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -252,6 +234,7 @@ export function App() {
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (settingsPopover.current?.matches(":popover-open")) return;
         setPanel(null);
         setClearTarget(null);
         setPresentation(false);
@@ -427,10 +410,7 @@ export function App() {
     };
     const nextDraws = [...draws, draw];
     // Commit the draw before the visual sequence: reloads cannot silently reroll it.
-    if (
-      !demo &&
-      !saveState({ participants, draws: nextDraws, excludeWinners, duration })
-    )
+    if (!demo && !saveState({ participants, draws: nextDraws, excludeWinners }))
       setNotice(
         "Resultado nesta sessão. Exporte o histórico: o salvamento local foi bloqueado.",
       );
@@ -443,7 +423,7 @@ export function App() {
       index: number,
       entries: WheelEntry[],
     ) => {
-      const seconds = reducedMotion ? 0.5 : randomSpinSeconds(duration);
+      const seconds = reducedMotion ? 0.5 : randomSpinSeconds();
       setActiveSpinSeconds(seconds);
       setRotation(
         entryLanding(
@@ -998,147 +978,6 @@ export function App() {
                 )}
               </div>
 
-              <div className="show-controls">
-                <button
-                  className={`spin-button ${running ? "spinning" : ""}`}
-                  disabled={!eligible.length || running || phase === "winner"}
-                  onClick={() => spin()}
-                >
-                  {running ? (
-                    <SpinnerGap size={22} className="spinner" />
-                  ) : (
-                    <Play size={21} weight="fill" />
-                  )}
-                  <span>{spinLabel}</span>
-                  {!running && phase !== "winner" && (
-                    <span className="button-spark">✦</span>
-                  )}
-                </button>
-                <div
-                  className="wheel-input-modes"
-                  role="group"
-                  aria-label="Modo de interação da roleta"
-                >
-                  <button
-                    aria-pressed={interactionMode === "orbit"}
-                    disabled={running}
-                    onClick={() => setInteractionMode("orbit")}
-                  >
-                    Explorar 3D
-                  </button>
-                  <button
-                    aria-pressed={interactionMode === "spin"}
-                    disabled={running}
-                    onClick={() => setInteractionMode("spin")}
-                  >
-                    Girar arrastando
-                  </button>
-                </div>
-                <div className="duration-control">
-                  <Clock size={21} />
-                  <div>
-                    <label htmlFor="duration">
-                      {groups.length
-                        ? "Suspense por etapa"
-                        : "Um pouco de suspense"}
-                    </label>
-                    <div className="select-wrapper">
-                      <select
-                        id="duration"
-                        disabled={running}
-                        value={duration}
-                        onChange={(event) =>
-                          setDuration(Number(event.target.value))
-                        }
-                      >
-                        {SPIN_RANGES.map((range) => (
-                          <option key={range.minimum} value={range.minimum}>
-                            {range.minimum}–{range.maximum} segundos
-                          </option>
-                        ))}
-                      </select>
-                      <CaretDown size={12} />
-                    </div>
-                  </div>
-                </div>
-                <button
-                  className="settings-button"
-                  title="Configurar o sorteio"
-                  aria-label="Configurar o sorteio"
-                  onClick={() => setPanel("settings")}
-                >
-                  <GearSix size={22} />
-                  <span className="settings-label">Configurações</span>
-                </button>
-                <div className="audio-toggles">
-                  <div className="audio-channel">
-                    <button
-                      className="audio-toggle"
-                      aria-pressed={effects}
-                      onClick={() => void toggleEffects()}
-                    >
-                      {effects ? (
-                        <SpeakerHigh size={18} />
-                      ) : (
-                        <SpeakerSlash size={18} />
-                      )}{" "}
-                      {effects ? "Efeitos ligados" : "Efeitos desligados"}
-                    </button>
-                    <label className="volume-control" htmlFor="effects-volume">
-                      <span>
-                        Efeitos <output>{levels.effects}%</output>
-                      </span>
-                      <input
-                        id="effects-volume"
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="1"
-                        value={levels.effects}
-                        aria-label="Volume dos efeitos sonoros"
-                        aria-valuetext={`${levels.effects}%`}
-                        onChange={(event) =>
-                          setLevels((current) => ({
-                            ...current,
-                            effects: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="audio-channel">
-                    <button
-                      className="audio-toggle"
-                      aria-pressed={!!soundtrack}
-                      onClick={toggleMusic}
-                    >
-                      <MusicNotes size={18} />{" "}
-                      {soundtrack ? "Música ligada" : "Música desligada"}
-                    </button>
-                    <label className="volume-control" htmlFor="music-volume">
-                      <span>
-                        Música <output>{levels.music}%</output>
-                      </span>
-                      <input
-                        id="music-volume"
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="1"
-                        value={levels.music}
-                        aria-label="Volume da música"
-                        aria-valuetext={`${levels.music}%`}
-                        onChange={(event) =>
-                          setLevels((current) => ({
-                            ...current,
-                            music: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
               <div className="show-bottom">
                 <span>
                   <CheckCircle size={15} /> Mesma chance para cada pessoa.
@@ -1276,85 +1115,168 @@ export function App() {
         </div>
       )}
 
+      <button
+        className="floating-settings-button"
+        popoverTarget="game-settings"
+        aria-label="Abrir configurações"
+        title="Configurações"
+      >
+        <GearSix size={25} />
+        <span>Configurações</span>
+      </button>
+      <div
+        ref={settingsPopover}
+        id="game-settings"
+        popover="auto"
+        className="floating-settings"
+        role="dialog"
+        aria-labelledby="game-settings-title"
+      >
+        <div className="floating-settings-heading">
+          <h2 id="game-settings-title">Do seu jeito</h2>
+          <button
+            popoverTarget="game-settings"
+            popoverTargetAction="hide"
+            aria-label="Fechar configurações"
+          >
+            <X size={21} />
+          </button>
+        </div>
+        <p className="floating-settings-intro">
+          Ajuste os controles e volte ao show.
+        </p>
+        <h3>Como mover a roleta</h3>
+        <div
+          className="wheel-input-modes"
+          role="group"
+          aria-label="Modo de interação da roleta"
+        >
+          <button
+            aria-pressed={interactionMode === "orbit"}
+            disabled={running}
+            onClick={() => setInteractionMode("orbit")}
+          >
+            Explorar 3D
+          </button>
+          <button
+            aria-pressed={interactionMode === "spin"}
+            disabled={running}
+            onClick={() => setInteractionMode("spin")}
+          >
+            Girar arrastando
+          </button>
+        </div>
+
+        <h3>Som do palco</h3>
+        <div className="audio-toggles">
+          <div className="audio-channel">
+            <button
+              className="audio-toggle"
+              aria-pressed={effects}
+              onClick={() => void toggleEffects()}
+            >
+              {effects ? <SpeakerHigh size={18} /> : <SpeakerSlash size={18} />}{" "}
+              {effects ? "Efeitos ligados" : "Efeitos desligados"}
+            </button>
+            <label className="volume-control" htmlFor="effects-volume">
+              <span>
+                Efeitos <output>{levels.effects}%</output>
+              </span>
+              <input
+                id="effects-volume"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={levels.effects}
+                aria-label="Volume dos efeitos sonoros"
+                aria-valuetext={`${levels.effects}%`}
+                onChange={(event) =>
+                  setLevels((current) => ({
+                    ...current,
+                    effects: Number(event.target.value),
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <div className="audio-channel">
+            <button
+              className="audio-toggle"
+              aria-pressed={!!soundtrack}
+              onClick={toggleMusic}
+            >
+              <MusicNotes size={18} />{" "}
+              {soundtrack ? "Música ligada" : "Música desligada"}
+            </button>
+            <label className="volume-control" htmlFor="music-volume">
+              <span>
+                Música <output>{levels.music}%</output>
+              </span>
+              <input
+                id="music-volume"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={levels.music}
+                aria-label="Volume da música"
+                aria-valuetext={`${levels.music}%`}
+                onChange={(event) =>
+                  setLevels((current) => ({
+                    ...current,
+                    music: Number(event.target.value),
+                  }))
+                }
+              />
+            </label>
+          </div>
+        </div>
+        <label className="toggle-row">
+          <span>
+            <strong>Uma chance para cada pessoa</strong>
+            <small>Retirar vencedores das próximas rodadas.</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={excludeWinners}
+            disabled={running || phase === "winner"}
+            onChange={(event) => {
+              setExcludeWinners(event.target.checked);
+              setWheelSnapshot(null);
+              setRotation(0);
+            }}
+          />
+          <span className="toggle-track" />
+        </label>
+
+        <button
+          className="secondary-button full"
+          onClick={() => {
+            settingsPopover.current?.hidePopover();
+            setPanel("music");
+          }}
+        >
+          <MusicNotes size={18} /> Ouvir as trilhas
+        </button>
+        <button
+          className="secondary-button full"
+          disabled={!draws.length}
+          onClick={exportResults}
+        >
+          <DownloadSimple size={18} /> Exportar resultados
+        </button>
+      </div>
+
       {panel && (
         <Dialog
           title={
-            panel === "settings"
-              ? "Do seu jeito"
-              : panel === "how"
-                ? "Todo grande show tem suas regras."
-                : "O som da nostalgia"
+            panel === "how"
+              ? "Todo grande show tem suas regras."
+              : "O som da nostalgia"
           }
           close={() => setPanel(null)}
         >
-          {panel === "settings" && (
-            <>
-              <p className="dialog-intro">
-                Ajuste os detalhes. A emoção fica por nossa conta.
-              </p>
-              <label className="toggle-row">
-                <span>
-                  <strong>Uma chance para cada pessoa</strong>
-                  <small>Retirar vencedores das próximas rodadas.</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={excludeWinners}
-                  disabled={running || phase === "winner"}
-                  onChange={(event) => {
-                    setExcludeWinners(event.target.checked);
-                    setWheelSnapshot(null);
-                    setRotation(0);
-                  }}
-                />
-                <span className="toggle-track" />
-              </label>
-              <label className="toggle-row">
-                <span>
-                  <strong>Efeitos sonoros</strong>
-                  <small>Cliques da roleta, revelação e comemoração.</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={effects}
-                  onChange={() => void toggleEffects()}
-                />
-                <span className="toggle-track" />
-              </label>
-              <div className="settings-note">
-                <Info size={20} />
-                <p>
-                  Os resultados ficam salvos somente neste navegador. Exporte o
-                  histórico para guardar ou compartilhar.
-                </p>
-              </div>
-              <label className="toggle-row">
-                <span>
-                  <strong>Música de fundo</strong>
-                  <small>Intro e roleta com troca automática.</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={!!soundtrack}
-                  onChange={toggleMusic}
-                />
-                <span className="toggle-track" />
-              </label>
-              <button
-                className="secondary-button full"
-                onClick={() => setPanel("music")}
-              >
-                <MusicNotes size={18} /> Ouvir as trilhas
-              </button>
-              <button
-                className="secondary-button full"
-                disabled={!draws.length}
-                onClick={exportResults}
-              >
-                <DownloadSimple size={18} /> Exportar resultados
-              </button>
-            </>
-          )}
           {panel === "how" && (
             <>
               <p className="dialog-intro">
