@@ -32,3 +32,7 @@ Os dados ficam somente no navegador. Para conservar os resultados fora dele, exp
 Homenagem independente, sem afiliação ao SBT ou à Jequiti.
 
 Modos do mouse: **Explorar 3D** altera o ângulo; **Girar arrastando** permite segurar uma borda e soltá-la para iniciar o sorteio. O gesto define só a direção da animação; o vencedor continua uniforme via Web Crypto. A trilha `public/audio/resultado.mp3` toca na comemoração e, ao terminar, a intro retorna.
+
+Volume: controles separados de 0 a 100% para música e efeitos, salvos neste navegador e aplicados sem reiniciar a trilha. Os botões de ligar/desligar preservam o nível escolhido.
+
+Duração variável: escolha 12–16, 16–22 (padrão) ou 22–30 segundos por etapa. Cada etapa sorteia sua duração independentemente do vencedor, em intervalos de 0,25 s; a animação e os efeitos usam o mesmo tempo. Giros mais longos também têm mais voltas. A preferência por movimento reduzido mantém a versão curta.

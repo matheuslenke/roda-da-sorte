@@ -45,14 +45,15 @@ export function entryLanding(
   index: number,
   entries: WheelEntry[],
   direction: 1 | -1 = 1,
+  turns = 6,
 ) {
   const sector = wheelSectors(entries)[index];
   if (!sector) throw new Error("Fatia inválida.");
   const target = (360 - sector.center) % 360;
   const modulo = (angle: number) => ((angle % 360) + 360) % 360;
   return direction === 1
-    ? current + 360 * 6 + modulo(target - current)
-    : current - 360 * 6 - modulo(current - target);
+    ? current + 360 * turns + modulo(target - current)
+    : current - 360 * turns - modulo(current - target);
 }
 
 export function groupForPerson(groups: VisualGroup[], participantId: string) {

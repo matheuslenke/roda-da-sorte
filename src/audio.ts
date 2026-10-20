@@ -1,20 +1,51 @@
 type Cue = "tick" | "reveal" | "win";
 
-/** Synthesized cues complement the two local music tracks. */
+/** Synthesized cues complement the local music tracks. */
 export class ShowAudio {
   private context: AudioContext | null = null;
-  enabled = true;
+  private output: GainNode | null = null;
+  private level = 1;
+  private active = true;
+
+  set enabled(enabled: boolean) {
+    this.active = enabled;
+    this.updateGain();
+  }
+
+  set volume(volume: number) {
+    this.level = Math.max(0, Math.min(1, volume));
+    this.updateGain();
+  }
+
+  private updateGain() {
+    if (this.context && this.output)
+      this.output.gain.setTargetAtTime(
+        this.active ? this.level : 0,
+        this.context.currentTime,
+        0.015,
+      );
+  }
 
   async prepare() {
-    if (!this.context || this.context.state === "closed")
+    if (!this.context || this.context.state === "closed") {
       this.context = new AudioContext();
+      this.output = this.context.createGain();
+      this.output.gain.value = this.active ? this.level : 0;
+      this.output.connect(this.context.destination);
+    }
     await this.context.resume();
   }
 
   cue(kind: Cue) {
-    if (!this.enabled || !this.context || this.context.state !== "running")
+    if (
+      !this.active ||
+      !this.context ||
+      !this.output ||
+      this.context.state !== "running"
+    )
       return;
     const context = this.context;
+    const output = this.output;
     const notes =
       kind === "win"
         ? [523.25, 659.25, 783.99, 1046.5]
@@ -37,7 +68,7 @@ export class ShowAudio {
         start + (kind === "win" ? 0.65 : 0.12),
       );
       oscillator.connect(gain);
-      gain.connect(context.destination);
+      gain.connect(output);
       oscillator.start(start);
       oscillator.stop(start + 0.7);
     });

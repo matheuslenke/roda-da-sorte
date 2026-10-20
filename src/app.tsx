@@ -48,6 +48,8 @@ import { LocalSoundtrack } from "./local-soundtrack";
 import type { Track } from "./local-soundtrack";
 import { entryLanding, groupForPerson, visualGroups } from "./wheel-model";
 import type { WheelEntry } from "./wheel-model";
+import { randomSpinSeconds, SPIN_RANGES } from "./spin-timing";
+import { readSoundLevels, saveSoundLevels } from "./sound-settings";
 
 type Phase =
   | "idle"
@@ -140,7 +142,7 @@ export function App() {
           })),
           draws: [],
           excludeWinners: true,
-          duration: 5,
+          duration: 16,
         }
       : initialState(),
   );
@@ -148,6 +150,8 @@ export function App() {
   const [draws, setDraws] = useState(saved.draws);
   const [excludeWinners, setExcludeWinners] = useState(saved.excludeWinners);
   const [duration, setDuration] = useState(saved.duration);
+  const [activeSpinSeconds, setActiveSpinSeconds] = useState(saved.duration);
+  const [levels, setLevels] = useState(readSoundLevels);
   const [nameInput, setNameInput] = useState("");
   const [entryMode, setEntryMode] = useState<"single" | "list">("single");
   const [query, setQuery] = useState("");
@@ -286,9 +290,14 @@ export function App() {
   }, [effects]);
 
   useEffect(() => {
+    audio.current.volume = levels.effects / 100;
+    saveSoundLevels(levels);
+  }, [levels]);
+
+  useEffect(() => {
     if (!spinning) return;
     const start = performance.now();
-    const total = (reducedMotion ? 0.5 : duration) * 1000;
+    const total = activeSpinSeconds * 1000;
     let timeout: ReturnType<typeof setTimeout>;
     const tick = () => {
       audio.current.cue("tick");
@@ -298,7 +307,7 @@ export function App() {
     };
     tick();
     return () => clearTimeout(timeout);
-  }, [phase, duration, reducedMotion]);
+  }, [phase, activeSpinSeconds]);
 
   function addParticipants(names: string[]) {
     const result = addNames(participants, names);
@@ -429,7 +438,24 @@ export function App() {
     setDraws(nextDraws);
     setSelectedGroup(null);
     if (soundtrack) setSoundtrack("spin");
-    const spinDuration = reducedMotion ? 500 : duration * 1000;
+    const prepareSpin = (
+      from: number,
+      index: number,
+      entries: WheelEntry[],
+    ) => {
+      const seconds = reducedMotion ? 0.5 : randomSpinSeconds(duration);
+      setActiveSpinSeconds(seconds);
+      setRotation(
+        entryLanding(
+          from,
+          index,
+          entries,
+          direction,
+          Math.max(6, Math.ceil(seconds * 0.8)),
+        ),
+      );
+      return seconds * 1000;
+    };
     const revealWinner = () => {
       setPhase("revealing");
       audio.current.cue("reveal");
@@ -448,7 +474,7 @@ export function App() {
     const drawGroups = visualGroups(pool);
     if (!drawGroups.length) {
       setWheelSnapshot(pool);
-      setRotation(entryLanding(rotation, index, pool, direction));
+      const spinDuration = prepareSpin(rotation, index, pool);
       setPhase("spinning");
       timers.current.push(setTimeout(revealWinner, spinDuration));
       return;
@@ -456,7 +482,7 @@ export function App() {
     const selection = groupForPerson(drawGroups, person.id);
     const entries = drawGroups.map((group) => group.entry);
     setWheelSnapshot(entries);
-    setRotation(entryLanding(rotation, selection.index, entries, direction));
+    const spinDuration = prepareSpin(rotation, selection.index, entries);
     setPhase("group-spinning");
     timers.current.push(
       setTimeout(() => {
@@ -467,16 +493,13 @@ export function App() {
           setTimeout(
             () => {
               setWheelSnapshot(selection.group.members);
-              setRotation(
-                entryLanding(
-                  0,
-                  selection.memberIndex,
-                  selection.group.members,
-                  direction,
-                ),
+              const finalDuration = prepareSpin(
+                0,
+                selection.memberIndex,
+                selection.group.members,
               );
               setPhase("spinning");
-              timers.current.push(setTimeout(revealWinner, spinDuration));
+              timers.current.push(setTimeout(revealWinner, finalDuration));
             },
             reducedMotion ? 150 : 1200,
           ),
@@ -923,7 +946,7 @@ export function App() {
                   people={wheelPeople}
                   rotation={rotation}
                   spinning={spinning}
-                  duration={reducedMotion ? 0.5 : duration}
+                  duration={activeSpinSeconds}
                   reducedMotion={reducedMotion}
                   onPlay={() => spin()}
                   onDragPlay={spin}
@@ -1028,9 +1051,11 @@ export function App() {
                           setDuration(Number(event.target.value))
                         }
                       >
-                        <option value="5">5 segundos</option>
-                        <option value="8">8 segundos</option>
-                        <option value="12">12 segundos</option>
+                        {SPIN_RANGES.map((range) => (
+                          <option key={range.minimum} value={range.minimum}>
+                            {range.minimum}–{range.maximum} segundos
+                          </option>
+                        ))}
                       </select>
                       <CaretDown size={12} />
                     </div>
@@ -1046,26 +1071,72 @@ export function App() {
                   <span className="settings-label">Configurações</span>
                 </button>
                 <div className="audio-toggles">
-                  <button
-                    className="audio-toggle"
-                    aria-pressed={effects}
-                    onClick={() => void toggleEffects()}
-                  >
-                    {effects ? (
-                      <SpeakerHigh size={18} />
-                    ) : (
-                      <SpeakerSlash size={18} />
-                    )}{" "}
-                    {effects ? "Efeitos ligados" : "Efeitos desligados"}
-                  </button>
-                  <button
-                    className="audio-toggle"
-                    aria-pressed={!!soundtrack}
-                    onClick={toggleMusic}
-                  >
-                    <MusicNotes size={18} />{" "}
-                    {soundtrack ? "Música ligada" : "Música desligada"}
-                  </button>
+                  <div className="audio-channel">
+                    <button
+                      className="audio-toggle"
+                      aria-pressed={effects}
+                      onClick={() => void toggleEffects()}
+                    >
+                      {effects ? (
+                        <SpeakerHigh size={18} />
+                      ) : (
+                        <SpeakerSlash size={18} />
+                      )}{" "}
+                      {effects ? "Efeitos ligados" : "Efeitos desligados"}
+                    </button>
+                    <label className="volume-control" htmlFor="effects-volume">
+                      <span>
+                        Efeitos <output>{levels.effects}%</output>
+                      </span>
+                      <input
+                        id="effects-volume"
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={levels.effects}
+                        aria-label="Volume dos efeitos sonoros"
+                        aria-valuetext={`${levels.effects}%`}
+                        onChange={(event) =>
+                          setLevels((current) => ({
+                            ...current,
+                            effects: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="audio-channel">
+                    <button
+                      className="audio-toggle"
+                      aria-pressed={!!soundtrack}
+                      onClick={toggleMusic}
+                    >
+                      <MusicNotes size={18} />{" "}
+                      {soundtrack ? "Música ligada" : "Música desligada"}
+                    </button>
+                    <label className="volume-control" htmlFor="music-volume">
+                      <span>
+                        Música <output>{levels.music}%</output>
+                      </span>
+                      <input
+                        id="music-volume"
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={levels.music}
+                        aria-label="Volume da música"
+                        aria-valuetext={`${levels.music}%`}
+                        onChange={(event) =>
+                          setLevels((current) => ({
+                            ...current,
+                            music: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
               <div className="show-bottom">
@@ -1412,6 +1483,7 @@ export function App() {
       {soundtrack && (
         <LocalSoundtrack
           track={soundtrack}
+          volume={levels.music / 100}
           onEnded={() =>
             setSoundtrack((current) =>
               current === "result" ? "background" : current,

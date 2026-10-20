@@ -11,9 +11,11 @@ export const TRACKS = {
 /** Native audio only: no remote player, iframe, tracking request or network dependency after assets load. */
 export function LocalSoundtrack({
   track,
+  volume,
   onEnded,
 }: {
   track: Track;
+  volume: number;
   onEnded: () => void;
 }) {
   const element = useRef<HTMLAudioElement>(null);
@@ -27,7 +29,6 @@ export function LocalSoundtrack({
     if (!audio) return;
     const request = generation.current;
     try {
-      audio.volume = 0.32;
       await audio.play();
       if (generation.current === request) setStatus("playing");
     } catch (cause) {
@@ -40,6 +41,11 @@ export function LocalSoundtrack({
       );
     }
   }
+
+  useEffect(() => {
+    if (element.current)
+      element.current.volume = Math.max(0, Math.min(1, volume));
+  }, [volume]);
 
   useEffect(() => {
     const audio = element.current;

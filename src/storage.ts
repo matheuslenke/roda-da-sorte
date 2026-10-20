@@ -64,9 +64,9 @@ export function initialState(): SavedState {
           participants,
           draws,
           excludeWinners: value.excludeWinners !== false,
-          duration: [5, 8, 12].includes(Number(value.duration))
+          duration: [12, 16, 22].includes(Number(value.duration))
             ? Number(value.duration)
-            : 8,
+            : 16,
         };
       }
     }
@@ -80,7 +80,7 @@ export function initialState(): SavedState {
     })),
     draws: [],
     excludeWinners: true,
-    duration: 8,
+    duration: 16,
   };
 }
 

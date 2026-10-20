@@ -2136,7 +2136,9 @@ dialog::backdrop {
     width: auto;
     flex-basis: 100%;
   }
-  .app .show-controls { flex-wrap: wrap; }
+  .app .show-controls {
+    flex-wrap: wrap;
+  }
   .wheel-input-modes button {
     padding: 0 8px;
     white-space: nowrap;
@@ -2158,4 +2160,58 @@ dialog::backdrop {
   .local-soundtrack.music-blocked {
     bottom: 195px;
   }
+}
+
+.audio-channel {
+  min-width: 0;
+  flex: 1;
+}
+.volume-control {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 6px 0;
+  color: #c6d7f1;
+  font-size: 10px;
+}
+.volume-control > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.volume-control output {
+  font-variant-numeric: tabular-nums;
+  color: #ffe19b;
+}
+.volume-control input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  accent-color: #f4cf70;
+  cursor: pointer;
+}
+.volume-control input:focus-visible {
+  outline: 2px solid #f4cf70;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+@media (max-width: 740px) {
+  .volume-control input {
+    height: 32px;
+  }
+  .app .three-wheel-shell {
+    top: 46%;
+  }
+  .app .stage {
+    --wheel-size: min(105vw, calc(100dvh - 365px));
+  }
+  .local-soundtrack.music-blocked {
+    bottom: 245px;
+  }
+}
+
+@media (min-width: 741px) and (max-width: 1100px) {
+  .app .stage { --wheel-size: min(calc(100dvh - 360px), 73vw, 900px); }
+  .app .three-wheel-shell { top: 44%; }
 }
